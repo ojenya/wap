@@ -43,6 +43,7 @@ class StageResult(BaseModel):
 
 class WorkflowContext(BaseModel):
     task: TaskInput
+    run_id: str = ""
     worktree_path: str = ""
     head_sha: str = ""
     workflow_params: dict[str, Any] = Field(default_factory=dict)

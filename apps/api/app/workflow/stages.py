@@ -402,7 +402,14 @@ class SandboxQAStage(Stage):
                 evidence=[],
                 tokens=10,
             )
-        pw = run_playwright(scenarios)
+        # E2E targets the *product under development* in the task worktree,
+        # not the platform UI itself.
+        pw = run_playwright(
+            scenarios,
+            worktree_path=context.worktree_path or None,
+            run_id=context.run_id or None,
+            task_title=context.task.title,
+        )
         results = [
             {
                 "scenario": r.scenario,
@@ -419,6 +426,9 @@ class SandboxQAStage(Stage):
                 "mode": pw.mode,
                 "console_errors": pw.console_errors,
                 "logs": pw.logs[:2000],
+                "base_url": pw.base_url,
+                "artifact_dir": pw.artifact_dir,
+                "start_command": pw.start_command,
             },
             evidence=[
                 Evidence(source="playwright", reference=r.scenario, reason=r.status)

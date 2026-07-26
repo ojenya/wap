@@ -199,6 +199,7 @@ def execute_run(
             path_filters=path_filters,
             require_approval=task.require_approval,
         ),
+        run_id=run.id,
         worktree_path=worktree_path or "",
         head_sha=head_sha,
         workflow_params=params,
@@ -446,3 +447,25 @@ def _capture_artifacts(db: Session, run: WorkflowRun, stage_name: str, output: d
         db.add(
             Artifact(run_id=run.id, kind="patch", name="change.patch", content=output["diff"])
         )
+    if stage_name == "sandbox_qa":
+        # Persist Playwright product-E2E artifact paths (screenshot/video/trace).
+        for result in output.get("results") or []:
+            for path in result.get("artifacts") or []:
+                name = Path(str(path)).name
+                db.add(
+                    Artifact(
+                        run_id=run.id,
+                        kind="playwright",
+                        name=name,
+                        content=str(path),
+                    )
+                )
+        if output.get("artifact_dir"):
+            db.add(
+                Artifact(
+                    run_id=run.id,
+                    kind="playwright",
+                    name="artifact-dir",
+                    content=str(output["artifact_dir"]),
+                )
+            )

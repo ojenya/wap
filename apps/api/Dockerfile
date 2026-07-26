@@ -19,8 +19,10 @@ RUN curl -fsSL https://opencode.ai/install | bash || echo "opencode install skip
 ENV PATH="/root/.opencode/bin:${PATH}"
 
 # Install the package (editable) so `uvicorn --reload` picks up mounted sources.
+# Playwright Chromium is needed by Sandbox QA (product worktree E2E).
 COPY apps/api/ /app/
-RUN pip install --no-cache-dir -e ".[dev]"
+RUN pip install --no-cache-dir -e ".[dev]" \
+    && playwright install --with-deps chromium
 
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

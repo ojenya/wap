@@ -44,12 +44,18 @@ zero external credentials.
 cd apps/api
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
+.venv/bin/playwright install chromium   # product worktree E2E (Sandbox QA)
 .venv/bin/uvicorn app.main:app --reload --port 8000   # http://localhost:8000
 ```
 
 - Lint: `.venv/bin/ruff check .`
 - Types: `.venv/bin/mypy app`
 - Tests: `.venv/bin/pytest`
+
+Sandbox QA runs Playwright against the **task worktree** (the product under
+change), writes `.wap/e2e/` into that tree, and stores artifacts under
+`data/artifacts/<run_id>/playwright/`. Without a connected repo/worktree the
+stage skips.
 
 ### Frontend (`apps/web`)
 

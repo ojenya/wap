@@ -64,3 +64,10 @@ and in the `scripts` of the root `package.json`. Don't duplicate them here.
   allowlisted keys, never arbitrary graph edits.
 - Learning: `/api/learning/cases` + `POST /api/learning/evals/run`. Metrics:
   `/api/metrics`.
+- Sandbox QA Playwright E2E targets the **product worktree** (software under
+  development), not the platform UI. `SandboxQAStage` starts the app from the
+  worktree, generates `.wap/e2e/` there, and stores screenshot/video/trace under
+  `APP_DATA_DIR/artifacts/<run_id>/playwright/`. Without a worktree (or when
+  Playwright/Chromium is missing) the stage skips gracefully. Install browsers
+  once with `apps/api/.venv/bin/playwright install chromium` (Docker image does
+  this at build time).
