@@ -13,7 +13,7 @@ from app.db import get_db
 from app.events import emit_event
 from app.models import Repository, RunComment, Task, WorkflowRun
 from app.schemas import ApproveIn, TaskCreate, TaskDetailOut, TaskOut, WorkflowRunOut
-from app.workflow.engine import approve_run, run_workflow, start_workflow_async
+from app.workflow.engine import approve_run, cancel_run, run_workflow, start_workflow_async
 from app.workflow.registry import WORKFLOWS
 
 router = APIRouter(prefix="/api", tags=["tasks"])
@@ -123,5 +123,21 @@ def approve(
         db.commit()
     try:
         return approve_run(db, run, actor=principal.name, sync=sync)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/runs/{run_id}/cancel", response_model=WorkflowRunOut)
+def cancel(
+    run_id: str,
+    principal: Operator,
+    db: Session = Depends(get_db),
+) -> WorkflowRun:
+    """Stop a pending/running/awaiting run. Cooperative: current stage may finish first."""
+    run = db.get(WorkflowRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    try:
+        return cancel_run(db, run, actor=principal.name)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

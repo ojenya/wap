@@ -1,16 +1,18 @@
 import type { Artifact, StageExecution, WorkflowRun } from "@wap/shared";
-import { ArrowLeft, Check, Loader2, MessageSquare, Play, Send } from "lucide-react";
+import { ArrowLeft, Check, Loader2, MessageSquare, Play, Send, Square } from "lucide-react";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { api } from "@/api/client";
 import {
   useApproveRun,
+  useCancelRun,
   useRunComments,
   useRunEvents,
   useStartRun,
   useTask,
 } from "@/api/hooks";
+import { RunTimeline } from "@/components/RunTimeline";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -90,27 +92,21 @@ function ArtifactGallery({ artifacts }: { artifacts: Artifact[] }) {
   );
 }
 
-function Transcript({ runId }: { runId: string }) {
+function Transcript({
+  runId,
+  runStatus,
+}: {
+  runId: string;
+  runStatus: WorkflowRun["status"];
+}) {
   const events = useRunEvents(runId);
   return (
     <Card>
       <CardHeader>
         <CardTitle>Run transcript</CardTitle>
       </CardHeader>
-      <CardContent className="max-h-72 space-y-2 overflow-auto">
-        {(events.data ?? []).map((e) => (
-          <div key={e.id} className="rounded-lg bg-[#f7f7f8] px-3 py-2 text-xs">
-            <div className="flex gap-2 text-muted-foreground">
-              <span className="font-mono">{e.kind}</span>
-              {e.stage_name && <span>{e.stage_name}</span>}
-              <span className="ml-auto">{new Date(e.created_at).toLocaleTimeString()}</span>
-            </div>
-            <div className="mt-1">{e.message}</div>
-          </div>
-        ))}
-        {!events.data?.length && (
-          <p className="text-sm text-muted-foreground">No events yet.</p>
-        )}
+      <CardContent className="max-h-96 overflow-auto pe-1">
+        <RunTimeline events={events.data ?? []} runStatus={runStatus} />
       </CardContent>
     </Card>
   );
@@ -189,13 +185,21 @@ function RunView({
   run,
   onApprove,
   approving,
+  onCancel,
+  cancelling,
 }: {
   run: WorkflowRun;
   onApprove: () => void;
   approving: boolean;
+  onCancel: () => void;
+  cancelling: boolean;
 }) {
   const report = run.artifacts.find((a) => a.kind === "report");
   const active = run.status === "pending" || run.status === "running";
+  const stoppable =
+    run.status === "pending" ||
+    run.status === "running" ||
+    run.status === "awaiting_approval";
   const sandbox = run.stages.find((s) => s.name === "sandbox_qa");
   const desktop = sandbox?.output_payload?.desktop_session as
     | { status?: string; instructions?: string[] }
@@ -213,17 +217,52 @@ function RunView({
             develop retries: {run.develop_iterations}
           </span>
         )}
+        {stoppable && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="ms-auto"
+            disabled={cancelling}
+            onClick={onCancel}
+          >
+            {cancelling ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Square className="h-3.5 w-3.5 fill-current" />
+            )}
+            Stop run
+          </Button>
+        )}
       </div>
       {run.status === "awaiting_approval" && (
         <Card className="border-amber-200 bg-amber-50">
           <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
             <p className="text-sm">High-risk change paused at the human approval gate.</p>
-            <Button onClick={onApprove} disabled={approving}>
-              {approving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-              Approve & continue
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={onCancel} disabled={cancelling || approving}>
+                {cancelling ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Square className="h-3.5 w-3.5 fill-current" />
+                )}
+                Stop
+              </Button>
+              <Button onClick={onApprove} disabled={approving || cancelling}>
+                {approving ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Check className="h-4 w-4" />
+                )}
+                Approve & continue
+              </Button>
+            </div>
           </CardContent>
         </Card>
+      )}
+      {run.status === "cancelled" && (
+        <p className="rounded-xl border border-neutral-200 bg-[#f7f7f8] px-3 py-2 text-sm text-muted-foreground">
+          Run was stopped. Remaining stages were skipped.
+        </p>
       )}
       {run.worktree_path && (
         <p className="rounded-xl bg-[#f7f7f8] px-3 py-2 font-mono text-xs text-muted-foreground">
@@ -250,7 +289,7 @@ function RunView({
       {active && (
         <p className="text-xs text-muted-foreground">Run in progress… polling for updates.</p>
       )}
-      <Transcript runId={run.id} />
+      <Transcript runId={run.id} runStatus={run.status} />
       <HitlPanel runId={run.id} />
       <ArtifactGallery artifacts={run.artifacts} />
       <div className="space-y-3">
@@ -279,6 +318,7 @@ export function TaskDetailPage() {
   const task = useTask(taskId, 1500);
   const startRun = useStartRun(taskId);
   const approve = useApproveRun(taskId);
+  const cancel = useCancelRun(taskId);
 
   if (task.isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
   if (task.isError || !task.data) {
@@ -286,6 +326,10 @@ export function TaskDetailPage() {
   }
 
   const latestRun = task.data.runs.at(-1);
+  const runBusy =
+    latestRun?.status === "pending" ||
+    latestRun?.status === "running" ||
+    latestRun?.status === "awaiting_approval";
 
   return (
     <div className="space-y-6">
@@ -310,7 +354,7 @@ export function TaskDetailPage() {
             )}
           </div>
         </div>
-        <Button onClick={() => startRun.mutate()} disabled={startRun.isPending}>
+        <Button onClick={() => startRun.mutate()} disabled={startRun.isPending || runBusy}>
           {startRun.isPending ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
@@ -325,6 +369,8 @@ export function TaskDetailPage() {
           run={latestRun}
           approving={approve.isPending}
           onApprove={() => approve.mutate(latestRun.id)}
+          cancelling={cancel.isPending}
+          onCancel={() => cancel.mutate(latestRun.id)}
         />
       ) : (
         <Card>

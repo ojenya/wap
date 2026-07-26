@@ -54,6 +54,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ note }),
     }),
+  cancelRun: (runId: string) =>
+    request<WorkflowRun>(`/runs/${runId}/cancel`, { method: "POST" }),
   listRepositories: () => request<Repository[]>("/repositories"),
   createRepository: (input: CreateRepositoryInput) =>
     request<Repository>("/repositories", { method: "POST", body: JSON.stringify(input) }),
