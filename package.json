@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "description": "Multi-agent change factory - monorepo (deterministic workflow orchestrator + web UI)",
+  "packageManager": "pnpm@11.17.0",
   "scripts": {
     "dev:web": "pnpm --filter @wap/web dev",
     "build:web": "pnpm --filter @wap/web build",

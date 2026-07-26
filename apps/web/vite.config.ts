@@ -2,14 +2,18 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 // Proxy API + health calls to the FastAPI orchestrator during development.
+// The target is env-configurable so the web container can reach the API by its
+// compose service name (http://api:8000) while local dev uses localhost.
+const apiTarget = process.env.API_PROXY_TARGET ?? "http://localhost:8000";
+
 export default defineConfig({
   plugins: [react()],
   server: {
     host: true,
     port: 5173,
     proxy: {
-      "/api": { target: "http://localhost:8000", changeOrigin: true },
-      "/health": { target: "http://localhost:8000", changeOrigin: true },
+      "/api": { target: apiTarget, changeOrigin: true },
+      "/health": { target: apiTarget, changeOrigin: true },
     },
   },
 });
