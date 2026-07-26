@@ -15,12 +15,14 @@ This repository implements a working platform covering the plan end-to-end:
   Workflow settings).
 
 Cursor Cloud–inspired platform layer (see `docs/PLATFORM_PLAN.md`): **Firecracker
-microVM environments** (boot/snapshot/restore/destroy; emulates without KVM),
-secrets vault + egress policy, artifact gallery, run transcript, HITL
-comments/steer, parallel subagents, automations (webhook/cron), GitHub draft
-PRs + GitLab MRs, MCP registry, desktop verification seam. Deterministic stubs
-keep the lifecycle runnable without external credentials; real adapters plug in
-at the documented seams.
+microVM environments** (boot/snapshot/restore/destroy/**delete**/screenshot;
+emulates without KVM), secrets vault + egress policy, artifact gallery, run
+transcript, HITL comments/steer, parallel subagents, automations (webhook/cron),
+GitHub draft PRs + GitLab MRs, MCP registry, desktop verification seam.
+Deterministic stubs keep the lifecycle runnable without external credentials;
+real adapters plug in at the documented seams.
+
+Configuration template: **[`.env.example`](.env.example)** → copy to `.env`.
 
 ## Monorepo layout
 
@@ -40,6 +42,10 @@ at the documented seams.
 
 ## Getting started
 
+```bash
+cp .env.example .env   # edit secrets / OAuth / Firecracker as needed
+```
+
 ### Backend (`apps/api`)
 
 ```bash
@@ -49,6 +55,9 @@ python3 -m venv .venv
 .venv/bin/playwright install chromium   # product worktree E2E (Sandbox QA)
 .venv/bin/uvicorn app.main:app --reload --port 8000   # http://localhost:8000
 ```
+
+The API loads `.env` from the process working directory (usually `apps/api` or
+the repo root when using Docker). Prefer variables from `.env.example`.
 
 - Lint: `.venv/bin/ruff check .`
 - Types: `.venv/bin/mypy app`
@@ -152,3 +161,47 @@ When `OPENCODE_API_KEY` and the `opencode` CLI are both present, the `develop`
 stage runs a real headless `opencode run` session; otherwise it transparently
 falls back to a deterministic stub so the workflow always completes. The active
 mode/plan/model is recorded in the `develop` stage's `runner` output.
+
+## Environments (Firecracker / local)
+
+UI: **Environments** — create an env, **Refresh snapshot**, **Boot VM**,
+**Delete**, and per-VM **Screenshot**.
+
+| Path | Contents |
+| --- | --- |
+| `data/vms/<id>/` | Instance runtime (`rootfs`, `vmlinux`, socket, workspace) |
+| `data/vm-snapshots/<env_id>/` | Snapshots from refresh / snapshot API |
+| `data/artifacts/vms/<id>/` | Manual VM screenshots (Environments → Screenshot) |
+| `data/artifacts/<run_id>/playwright/` | Product E2E shots from Sandbox QA |
+
+API:
+
+- `DELETE /api/environments/{id}` — destroy VMs + wipe staging/snapshots
+- `POST /api/environments/{id}/vms/{vm_id}/screenshot` — workspace preview PNG
+- `GET .../screenshot/latest` — fetch the last capture
+
+Firecracker modes (`APP_FIRECRACKER_MODE` / `FIRECRACKER_MODE`):
+
+| Mode | Behavior |
+| --- | --- |
+| `auto` (default) | Real microVM when KVM + binary + kernel/rootfs exist; else emulate |
+| `emulate` | Stub Firecracker API paths without `/dev/kvm` (good for CI/dev) |
+| `require` | Fail if a real Firecracker boot is impossible |
+| `local` | Force local jail backend |
+
+For real microVMs set `APP_FIRECRACKER_KERNEL` and `APP_FIRECRACKER_ROOTFS`
+(see `.env.example`).
+
+## Configuration reference
+
+All knobs are listed in [`.env.example`](.env.example). Common groups:
+
+| Group | Keys |
+| --- | --- |
+| Core | `APP_DATABASE_URL`, `APP_DATA_DIR`, `APP_SECRET_KEY`, `APP_AUTH_REQUIRED` |
+| OAuth | `GITLAB_OAUTH_*`, `GITHUB_OAUTH_*` |
+| opencode | `OPENCODE_API_KEY`, `OPENCODE_PLAN`, `OPENCODE_MODEL` |
+| Playwright | `APP_PLAYWRIGHT_ENABLED`, `APP_PLAYWRIGHT_TIMEOUT_SECONDS` |
+| Firecracker | `APP_FIRECRACKER_MODE`, `APP_FIRECRACKER_BIN`, `APP_FIRECRACKER_*` |
+
+`docker compose up` interpolates the same names from your shell / `.env`.
