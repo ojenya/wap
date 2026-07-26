@@ -1,0 +1,18 @@
+{
+  "name": "wap-platform",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Multi-agent change factory - monorepo (deterministic workflow orchestrator + web UI)",
+  "scripts": {
+    "dev:web": "pnpm --filter @wap/web dev",
+    "build:web": "pnpm --filter @wap/web build",
+    "lint:web": "pnpm --filter @wap/web lint",
+    "typecheck:web": "pnpm --filter @wap/web typecheck"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}
