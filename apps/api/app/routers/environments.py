@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.auth import Operator, Viewer
 from app.db import get_db
-from app.environments import create_environment, list_environments, refresh_environment
+from app.environments import (
+    create_environment,
+    delete_environment,
+    list_environments,
+    refresh_environment,
+)
 from app.models import Environment, VmInstance
 from app.vm.backends import VmBackendError
 from app.vm.manager import VmManager
@@ -165,6 +173,14 @@ def refresh_env(env_id: str, _: Operator, db: Session = Depends(get_db)) -> Envi
     return _env_out(refresh_environment(db, env))
 
 
+@router.delete("/{env_id}", status_code=204)
+def delete_env(env_id: str, _: Operator, db: Session = Depends(get_db)) -> None:
+    env = db.get(Environment, env_id)
+    if env is None:
+        raise HTTPException(status_code=404, detail="Environment not found")
+    delete_environment(db, env)
+
+
 @router.get("/{env_id}", response_model=EnvironmentOut)
 def get_env(env_id: str, _: Viewer, db: Session = Depends(get_db)) -> EnvironmentOut:
     env = db.get(Environment, env_id)
@@ -260,3 +276,39 @@ def exec_vm(
     except VmBackendError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"exit_code": code, "output": out[:8000]}
+
+
+@router.post("/{env_id}/vms/{vm_id}/screenshot")
+def screenshot_vm(
+    env_id: str, vm_id: str, _: Operator, db: Session = Depends(get_db)
+) -> dict:
+    """Capture a workspace preview PNG (not a guest desktop framebuffer)."""
+    env = db.get(Environment, env_id)
+    vm = db.get(VmInstance, vm_id)
+    if env is None or vm is None or vm.environment_id != env_id:
+        raise HTTPException(status_code=404, detail="VM not found")
+    try:
+        path = VmManager(db).screenshot(vm)
+    except VmBackendError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "path": str(path),
+        "url": f"/api/environments/{env_id}/vms/{vm_id}/screenshot/latest",
+        "filename": path.name,
+    }
+
+
+@router.get("/{env_id}/vms/{vm_id}/screenshot/latest")
+def latest_screenshot(
+    env_id: str, vm_id: str, _: Viewer, db: Session = Depends(get_db)
+) -> FileResponse:
+    vm = db.get(VmInstance, vm_id)
+    if vm is None or vm.environment_id != env_id:
+        raise HTTPException(status_code=404, detail="VM not found")
+    path_str = (vm.meta or {}).get("last_screenshot")
+    if not path_str:
+        raise HTTPException(status_code=404, detail="No screenshot yet")
+    path = Path(path_str)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Screenshot file missing")
+    return FileResponse(path, media_type="image/png", filename=path.name)

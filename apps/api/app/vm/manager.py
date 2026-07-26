@@ -176,3 +176,36 @@ class VmManager:
 
     def get_instance(self, instance_id: str) -> VmInstance | None:
         return self.db.get(VmInstance, instance_id)
+
+    def screenshot(self, instance: VmInstance) -> Path:
+        """Capture a workspace screenshot into data/artifacts/vms/<id>/."""
+        if not instance.workspace_path:
+            raise VmBackendError("instance has no workspace_path")
+        from app.vm.screenshot import capture_vm_screenshot
+
+        artifacts_root = Path(self.settings.data_dir).resolve() / "artifacts"
+        path = capture_vm_screenshot(
+            instance_id=instance.id,
+            workspace_path=instance.workspace_path,
+            artifacts_root=artifacts_root,
+            backend=(
+                instance.backend.value
+                if hasattr(instance.backend, "value")
+                else str(instance.backend)
+            ),
+            status=(
+                instance.status.value
+                if hasattr(instance.status, "value")
+                else str(instance.status)
+            ),
+        )
+        meta = dict(instance.meta or {})
+        shots = list(meta.get("screenshots") or [])
+        shots.append(str(path))
+        meta["screenshots"] = shots[-20:]
+        meta["last_screenshot"] = str(path)
+        instance.meta = meta
+        instance.updated_at = _now()
+        self.db.commit()
+        self.db.refresh(instance)
+        return path

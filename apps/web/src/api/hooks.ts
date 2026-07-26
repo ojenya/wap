@@ -129,6 +129,14 @@ export function useRefreshEnvironment() {
   });
 }
 
+export function useDeleteEnvironment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.deleteEnvironment(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: envKeys.all }),
+  });
+}
+
 export function useAutomations() {
   return useQuery({ queryKey: autoKeys.all, queryFn: api.listAutomations });
 }

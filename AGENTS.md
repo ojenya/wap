@@ -88,10 +88,14 @@ and in the `scripts` of the root `package.json`. Don't duplicate them here.
   in analysis, desktop verification session on sandbox_qa.
 - **Firecracker VMs:** `app/vm/` — capabilities at
   `GET /api/environments/capabilities`. Lifecycle:
-  `.../vms/boot|snapshot|restore|destroy|exec`. Set
+  `.../vms/boot|snapshot|restore|destroy|exec|screenshot` and
+  `DELETE /api/environments/{id}` (UI Delete button). Set
   `APP_FIRECRACKER_MODE=emulate` in CI (default `auto` emulates when KVM/assets
   missing). For real microVMs on a KVM host: install `firecracker`, set
   `APP_FIRECRACKER_KERNEL` + `APP_FIRECRACKER_ROOTFS`, mode `auto`/`require`.
   Repo-linked Environments boot a VM per run; stages use `vm.workspace_path`.
+  `data/vms/<id>/` is the instance disk/socket (not screenshots). Manual VM
+  screenshots go to `data/artifacts/vms/<id>/` via Environments → Screenshot;
+  product E2E shots stay under `data/artifacts/<run_id>/playwright/`.
 - Web pages: Environments + Automations in the sidebar; Task detail shows
   transcript, HITL panel, artifact gallery, desktop instructions.
