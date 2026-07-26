@@ -14,11 +14,12 @@ This repository implements a working platform covering the plan end-to-end:
 - OpenAI-like **shadcn/ui** web app (Dashboard, Tasks, Repositories, Learning,
   Workflow settings).
 
-Advanced phases (real LLM gateway, pgvector RAG, isolated `opencode` runner,
-Playwright sandbox, GitLab integration, learning loop) are wired as clearly
-isolated extension points (`# EXTENSION POINT` in `apps/api/app/workflow/stages.py`)
-backed by deterministic stub agents, so the whole lifecycle runs end-to-end with
-zero external credentials.
+Cursor Cloud–inspired platform layer (see `docs/PLATFORM_PLAN.md`): environment
+snapshots + update scripts, secrets vault + egress policy, artifact gallery,
+run transcript, HITL comments/steer, parallel subagents, automations
+(webhook/cron), GitHub draft PRs + GitLab MRs, MCP registry, desktop
+verification seam. Deterministic stubs keep the lifecycle runnable without
+external credentials; real adapters plug in at the documented seams.
 
 ## Monorepo layout
 

@@ -4,7 +4,9 @@ import ReactDOM from "react-dom/client";
 import { RouterProvider, createBrowserRouter } from "react-router-dom";
 
 import { App } from "./App";
+import { AutomationsPage } from "./pages/AutomationsPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { EnvironmentsPage } from "./pages/EnvironmentsPage";
 import { LearningPage } from "./pages/LearningPage";
 import { RepositoriesPage } from "./pages/RepositoriesPage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -25,6 +27,8 @@ const router = createBrowserRouter([
       { path: "tasks", element: <TasksPage /> },
       { path: "tasks/:taskId", element: <TaskDetailPage /> },
       { path: "repositories", element: <RepositoriesPage /> },
+      { path: "environments", element: <EnvironmentsPage /> },
+      { path: "automations", element: <AutomationsPage /> },
       { path: "learning", element: <LearningPage /> },
       { path: "settings", element: <SettingsPage /> },
     ],

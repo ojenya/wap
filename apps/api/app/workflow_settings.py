@@ -34,6 +34,9 @@ SAFE_PARAM_DEFAULTS: dict = {
     "playwright_enabled": True,
     # When true, sandbox_qa may not skip: missing worktree/Chromium fails the run.
     "playwright_required": True,
+    "parallel_subagents": True,
+    "github_draft_pr": True,
+    "computer_use_enabled": True,
     "opencode_plan": "zen",
     "opencode_model": "opencode/qwen3-coder",
     "report_sections": [

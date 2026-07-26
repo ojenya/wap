@@ -154,3 +154,83 @@ export interface CaseMemory {
   repository_id: string | null;
   created_at: string;
 }
+
+export interface Environment {
+  id: string;
+  name: string;
+  repository_id: string | null;
+  dockerfile_path: string;
+  environment_json_path: string;
+  update_script: string;
+  agents_md_path: string;
+  snapshot_id: string | null;
+  status: string;
+  last_refresh_log: string;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Automation {
+  id: string;
+  name: string;
+  enabled: boolean;
+  trigger_type: string;
+  cron_expr: string;
+  webhook_token: string;
+  repository_id: string | null;
+  task_title_template: string;
+  task_description_template: string;
+  task_type: string;
+  auto_start: boolean;
+  last_triggered_at: string | null;
+  created_at: string;
+}
+
+export interface RunEvent {
+  id: string;
+  run_id: string;
+  kind: string;
+  stage_name: string;
+  message: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface RunComment {
+  id: string;
+  run_id: string;
+  author: string;
+  body: string;
+  kind: string;
+  created_at: string;
+}
+
+export interface VaultSecretMeta {
+  id: string;
+  name: string;
+  scope: string;
+  environment_id: string | null;
+  description: string;
+  created_at: string;
+  has_value: boolean;
+}
+
+export interface EgressPolicy {
+  id: string;
+  name: string;
+  allow_all: boolean;
+  allowed_domains: string[];
+  environment_id: string | null;
+}
+
+export interface McpServer {
+  id: string;
+  name: string;
+  transport: string;
+  url: string;
+  command: string;
+  enabled: boolean;
+  tools_cache: unknown[];
+  created_at: string;
+}

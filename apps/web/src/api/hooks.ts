@@ -13,6 +13,8 @@ export const taskKeys = {
 };
 
 export const repoKeys = { all: ["repositories"] as const };
+export const envKeys = { all: ["environments"] as const };
+export const autoKeys = { all: ["automations"] as const };
 
 export function useTasks() {
   return useQuery({ queryKey: taskKeys.all, queryFn: api.listTasks });
@@ -103,5 +105,66 @@ export function useRunEvals() {
   return useMutation({
     mutationFn: () => api.runEvals(),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["cases"] }),
+  });
+}
+
+export function useEnvironments() {
+  return useQuery({ queryKey: envKeys.all, queryFn: api.listEnvironments });
+}
+
+export function useCreateEnvironment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { name: string; update_script?: string }) =>
+      api.createEnvironment(input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: envKeys.all }),
+  });
+}
+
+export function useRefreshEnvironment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.refreshEnvironment(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: envKeys.all }),
+  });
+}
+
+export function useAutomations() {
+  return useQuery({ queryKey: autoKeys.all, queryFn: api.listAutomations });
+}
+
+export function useCreateAutomation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: Record<string, unknown>) => api.createAutomation(input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: autoKeys.all }),
+  });
+}
+
+export function useTriggerAutomation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.triggerAutomation(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: autoKeys.all });
+      qc.invalidateQueries({ queryKey: taskKeys.all });
+    },
+  });
+}
+
+export function useRunEvents(runId: string) {
+  return useQuery({
+    queryKey: ["events", runId],
+    queryFn: () => api.listRunEvents(runId),
+    enabled: Boolean(runId),
+    refetchInterval: 2000,
+  });
+}
+
+export function useRunComments(runId: string) {
+  return useQuery({
+    queryKey: ["comments", runId],
+    queryFn: () => api.listRunComments(runId),
+    enabled: Boolean(runId),
   });
 }

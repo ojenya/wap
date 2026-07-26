@@ -180,6 +180,8 @@ class AnalysisStage(Stage):
     agent_role = "Analysis Agent"
 
     def run(self, context: WorkflowContext) -> StageResult:
+        from app.workflow.parallel import run_parallel_subagents
+
         ctx = context.get("repository_context")
         files = ctx.get("retrieved_files", [])
         affected = [f for f in files if not f.startswith("tests/")]
@@ -188,15 +190,34 @@ class AnalysisStage(Stage):
             f"User can exercise '{context.task.title}' happy path",
             "Edge case: invalid input is rejected with a clear error",
         ]
+        parallel: dict = {
+            "parallel": False,
+            "subagents": [],
+            "merged_findings": [],
+            "tokens": 0,
+        }
+        if context.workflow_params.get("parallel_subagents", True):
+            parallel = run_parallel_subagents(context.task.title, files)
+        subagents = list(parallel.get("subagents") or [])
         return StageResult(
             output={
                 "affected_files": affected,
                 "tests_to_run": tests,
                 "playwright_scenarios": scenarios,
                 "regression_risk": "medium" if len(affected) > 2 else "low",
+                "subagents": parallel,
             },
-            evidence=[Evidence(source="rag", reference=f) for f in affected],
-            tokens=_tokens(files, scenarios),
+            evidence=[Evidence(source="rag", reference=f) for f in affected]
+            + [
+                Evidence(
+                    source="subagent",
+                    reference=str(s.get("role", "")),
+                    reason=str(s.get("status", "")),
+                )
+                for s in subagents
+                if isinstance(s, dict)
+            ],
+            tokens=_tokens(files, scenarios) + int(parallel.get("tokens") or 0),
         )
 
 
@@ -478,6 +499,15 @@ class SandboxQAStage(Stage):
                 ],
                 tokens=_tokens(results),
             )
+        from app.computer_use import prepare_desktop_session, session_to_dict
+
+        desktop = session_to_dict(
+            prepare_desktop_session(
+                worktree_path=context.worktree_path or None,
+                base_url=pw.base_url,
+                scenarios=scenarios,
+            )
+        )
         return StageResult(
             output={
                 "results": results,
@@ -488,10 +518,18 @@ class SandboxQAStage(Stage):
                 "base_url": pw.base_url,
                 "artifact_dir": pw.artifact_dir,
                 "start_command": pw.start_command,
+                "desktop_session": desktop,
             },
             evidence=[
                 Evidence(source="playwright", reference=r.scenario, reason=r.status)
                 for r in pw.results
+            ]
+            + [
+                Evidence(
+                    source="computer_use",
+                    reference=desktop.get("base_url") or "desktop",
+                    reason=desktop.get("status", ""),
+                )
             ],
             tokens=_tokens(results),
         )

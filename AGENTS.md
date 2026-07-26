@@ -77,3 +77,11 @@ and in the `scripts` of the root `package.json`. Don't duplicate them here.
   `apps/api/.venv/bin/playwright install chromium` (Docker image installs at
   build), and `playwright_enabled=true`. Set `playwright_required=false` only
   for local smoke runs without a product checkout.
+- Platform plan (Cursor Cloud–inspired): `docs/PLATFORM_PLAN.md`. New surfaces:
+  Environments (`/api/environments`), Secrets+Egress (`/api/secrets`,
+  `/api/egress-policy`), Artifacts download (`/api/artifacts/{id}/content`),
+  HITL transcript (`/api/runs/{id}/events|comments|steer`), Automations
+  (`/api/automations`), MCP (`/api/mcp`), GitHub draft PRs, parallel subagents
+  in analysis, desktop verification session on sandbox_qa.
+- Web pages: Environments + Automations in the sidebar; Task detail shows
+  transcript, HITL panel, artifact gallery, desktop instructions.

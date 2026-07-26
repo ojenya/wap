@@ -253,3 +253,157 @@ class SecretAccessLog(Base):
     purpose: Mapped[str] = mapped_column(String(100))
     actor: Mapped[str] = mapped_column(String(100), default="system")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+# ---------------------------------------------------------------------------
+# Cursor Cloud–inspired platform extensions
+# ---------------------------------------------------------------------------
+
+
+class EnvironmentStatus(enum.StrEnum):
+    draft = "draft"
+    ready = "ready"
+    refreshing = "refreshing"
+    error = "error"
+
+
+class SecretScope(enum.StrEnum):
+    environment = "environment"
+    runtime = "runtime"
+    build = "build"
+
+
+class AutomationTrigger(enum.StrEnum):
+    webhook = "webhook"
+    cron = "cron"
+    gitlab_mr = "gitlab_mr"
+    github_pr = "github_pr"
+    manual = "manual"
+
+
+class McpTransport(enum.StrEnum):
+    http = "http"
+    stdio = "stdio"
+
+
+class Environment(Base):
+    """Per-repo (or shared) cloud-like development environment definition."""
+
+    __tablename__ = "environments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(200))
+    repository_id: Mapped[str | None] = mapped_column(
+        ForeignKey("repositories.id", ondelete="SET NULL"), nullable=True
+    )
+    dockerfile_path: Mapped[str] = mapped_column(String(500), default=".cursor/Dockerfile")
+    environment_json_path: Mapped[str] = mapped_column(
+        String(500), default=".cursor/environment.json"
+    )
+    update_script: Mapped[str] = mapped_column(Text, default="pnpm install\npip install -e .")
+    agents_md_path: Mapped[str] = mapped_column(String(500), default="AGENTS.md")
+    snapshot_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    status: Mapped[EnvironmentStatus] = mapped_column(
+        Enum(EnvironmentStatus), default=EnvironmentStatus.draft
+    )
+    last_refresh_log: Mapped[str] = mapped_column(Text, default="")
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class VaultSecret(Base):
+    """Scoped encrypted secret (never returned in plaintext via API)."""
+
+    __tablename__ = "vault_secrets"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(200))
+    scope: Mapped[SecretScope] = mapped_column(Enum(SecretScope), default=SecretScope.runtime)
+    environment_id: Mapped[str | None] = mapped_column(
+        ForeignKey("environments.id", ondelete="CASCADE"), nullable=True
+    )
+    value_encrypted: Mapped[str] = mapped_column(Text, default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class EgressPolicy(Base):
+    """Network egress allowlist for agent runs (Cursor-like)."""
+
+    __tablename__ = "egress_policies"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(200), unique=True, default="default")
+    allow_all: Mapped[bool] = mapped_column(Boolean, default=False)
+    allowed_domains: Mapped[list] = mapped_column(JSON, default=list)
+    environment_id: Mapped[str | None] = mapped_column(
+        ForeignKey("environments.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class RunEvent(Base):
+    """Append-only transcript / observability timeline for a run."""
+
+    __tablename__ = "run_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    run_id: Mapped[str] = mapped_column(ForeignKey("workflow_runs.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String(50), default="info")
+    stage_name: Mapped[str] = mapped_column(String(100), default="")
+    message: Mapped[str] = mapped_column(Text, default="")
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class RunComment(Base):
+    """Human-in-the-loop comments / steering notes on a run."""
+
+    __tablename__ = "run_comments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    run_id: Mapped[str] = mapped_column(ForeignKey("workflow_runs.id", ondelete="CASCADE"))
+    author: Mapped[str] = mapped_column(String(100), default="operator")
+    body: Mapped[str] = mapped_column(Text, default="")
+    kind: Mapped[str] = mapped_column(String(50), default="comment")  # comment|approval|steer
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class Automation(Base):
+    """Event-driven task factory (webhook / cron / SCM triggers)."""
+
+    __tablename__ = "automations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(200))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    trigger_type: Mapped[AutomationTrigger] = mapped_column(
+        Enum(AutomationTrigger), default=AutomationTrigger.webhook
+    )
+    cron_expr: Mapped[str] = mapped_column(String(100), default="")
+    webhook_token: Mapped[str] = mapped_column(String(64), default="")
+    repository_id: Mapped[str | None] = mapped_column(
+        ForeignKey("repositories.id", ondelete="SET NULL"), nullable=True
+    )
+    task_title_template: Mapped[str] = mapped_column(String(200), default="Automation: {{name}}")
+    task_description_template: Mapped[str] = mapped_column(Text, default="")
+    task_type: Mapped[str] = mapped_column(String(50), default="bug_fix")
+    auto_start: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_triggered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class McpServer(Base):
+    """Registered MCP server (HTTP or stdio) available to agents."""
+
+    __tablename__ = "mcp_servers"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(200), unique=True)
+    transport: Mapped[McpTransport] = mapped_column(Enum(McpTransport), default=McpTransport.http)
+    url: Mapped[str] = mapped_column(String(500), default="")
+    command: Mapped[str] = mapped_column(String(500), default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    tools_cache: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

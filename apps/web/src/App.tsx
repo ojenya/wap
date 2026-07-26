@@ -1,11 +1,13 @@
 import {
   Activity,
   BookOpen,
+  Box,
   GitBranch,
   LayoutDashboard,
   ListTodo,
   Settings2,
   Sparkles,
+  Zap,
 } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
 
@@ -15,6 +17,8 @@ const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/tasks", label: "Tasks", icon: ListTodo },
   { to: "/repositories", label: "Repositories", icon: GitBranch },
+  { to: "/environments", label: "Environments", icon: Box },
+  { to: "/automations", label: "Automations", icon: Zap },
   { to: "/learning", label: "Learning", icon: BookOpen },
   { to: "/settings", label: "Workflow", icon: Settings2 },
 ];
@@ -52,7 +56,7 @@ export function App() {
         </nav>
         <div className="flex items-start gap-2 rounded-xl bg-white p-3 text-xs text-muted-foreground shadow-sm">
           <Activity className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          Async runs · worktrees · GitLab MR · RAG · approval gates
+          Env snapshots · artifacts · HITL · MCP · GitHub/GitLab
         </div>
       </aside>
       <main className="flex-1 overflow-auto">

@@ -1,14 +1,19 @@
 import type {
+  Automation,
   CaseMemory,
   CreateRepositoryInput,
   CreateTaskInput,
+  Environment,
   GitLabProject,
   Metrics,
   Repository,
+  RunComment,
+  RunEvent,
   Task,
   TaskDetail,
   WorkflowConfig,
   WorkflowRun,
+  Artifact,
 } from "@wap/shared";
 
 const BASE = "/api";
@@ -40,10 +45,10 @@ export const api = {
   startRun: (taskId: string) =>
     request<WorkflowRun>(`/tasks/${taskId}/runs`, { method: "POST" }),
   getRun: (runId: string) => request<WorkflowRun>(`/runs/${runId}`),
-  approveRun: (runId: string) =>
+  approveRun: (runId: string, note = "approved from UI") =>
     request<WorkflowRun>(`/runs/${runId}/approve`, {
       method: "POST",
-      body: JSON.stringify({ note: "approved from UI" }),
+      body: JSON.stringify({ note }),
     }),
   listRepositories: () => request<Repository[]>("/repositories"),
   createRepository: (input: CreateRepositoryInput) =>
@@ -74,4 +79,30 @@ export const api = {
       "/learning/evals/run",
       { method: "POST" },
     ),
+  listEnvironments: () => request<Environment[]>("/environments"),
+  createEnvironment: (input: { name: string; update_script?: string; repository_id?: string }) =>
+    request<Environment>("/environments", { method: "POST", body: JSON.stringify(input) }),
+  refreshEnvironment: (id: string) =>
+    request<Environment>(`/environments/${id}/refresh`, { method: "POST" }),
+  listAutomations: () => request<Automation[]>("/automations"),
+  createAutomation: (input: Record<string, unknown>) =>
+    request<Automation>("/automations", { method: "POST", body: JSON.stringify(input) }),
+  triggerAutomation: (id: string) =>
+    request<{ task_id: string; run_id: string | null }>(`/automations/${id}/trigger`, {
+      method: "POST",
+    }),
+  listRunEvents: (runId: string) => request<RunEvent[]>(`/runs/${runId}/events`),
+  listRunComments: (runId: string) => request<RunComment[]>(`/runs/${runId}/comments`),
+  addRunComment: (runId: string, body: string) =>
+    request<RunComment>(`/runs/${runId}/comments`, {
+      method: "POST",
+      body: JSON.stringify({ body, kind: "comment" }),
+    }),
+  steerRun: (runId: string, guidance: string) =>
+    request<RunComment>(`/runs/${runId}/steer`, {
+      method: "POST",
+      body: JSON.stringify({ guidance }),
+    }),
+  listRunArtifacts: (runId: string) => request<Artifact[]>(`/runs/${runId}/artifacts`),
+  artifactContentUrl: (artifactId: string) => `${BASE}/artifacts/${artifactId}/content`,
 };

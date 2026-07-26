@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.auth import Operator, Viewer
 from app.db import get_db
-from app.models import Repository, Task, WorkflowRun
+from app.events import emit_event
+from app.models import Repository, RunComment, Task, WorkflowRun
 from app.schemas import ApproveIn, TaskCreate, TaskDetailOut, TaskOut, WorkflowRunOut
 from app.workflow.engine import approve_run, run_workflow, start_workflow_async
 from app.workflow.registry import WORKFLOWS
@@ -102,6 +103,24 @@ def approve(
     run = db.get(WorkflowRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    if payload.note:
+        db.add(
+            RunComment(
+                run_id=run_id,
+                author=principal.name,
+                body=payload.note,
+                kind="approval",
+            )
+        )
+        emit_event(
+            db,
+            run_id=run_id,
+            kind="hitl",
+            stage_name="approval_gate",
+            message=f"approved by {principal.name}",
+            payload={"note": payload.note[:500]},
+        )
+        db.commit()
     try:
         return approve_run(db, run, actor=principal.name, sync=sync)
     except ValueError as exc:

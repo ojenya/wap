@@ -10,10 +10,13 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
+from app.events import emit_event
 from app.git_workspace import GitWorkspaceError, GitWorkspaceManager, authenticated_url
+from app.github_client import GitHubError, create_pull_request, parse_github_repo, post_pr_comment
 from app.gitlab_client import GitLabError, create_merge_request, post_mr_note, push_branch
 from app.models import (
     Artifact,
+    RepoProvider,
     Repository,
     RepoStatus,
     RiskLevel,
@@ -137,6 +140,13 @@ def execute_run(
 ) -> WorkflowRun:
     params = effective_params(db)
     run.status = RunStatus.running
+    emit_event(
+        db,
+        run_id=run.id,
+        kind="run",
+        message="run started" if not resume else "run resumed",
+        payload={"resume": resume, "workflow": run.workflow_version},
+    )
     db.commit()
 
     worktree_path = run.worktree_path or ""
@@ -247,6 +257,14 @@ def execute_run(
         execution.started_at = _now()
         execution.input_payload = context.model_dump(mode="json")
         execution.error = None
+        emit_event(
+            db,
+            run_id=run.id,
+            kind="stage_start",
+            stage_name=stage.name,
+            message=f"stage {stage.name} started",
+            payload={"agent_role": stage.agent_role},
+        )
         db.commit()
 
         t0 = time.perf_counter()
@@ -258,6 +276,13 @@ def execute_run(
             execution.finished_at = _now()
             execution.duration_ms = (time.perf_counter() - t0) * 1000
             run.total_duration_ms += execution.duration_ms
+            emit_event(
+                db,
+                run_id=run.id,
+                kind="stage_error",
+                stage_name=stage.name,
+                message=str(exc),
+            )
             db.commit()
             failed = True
             idx += 1
@@ -310,24 +335,33 @@ def execute_run(
             execution.status = StageStatus.completed
             context.outputs[stage.name] = result.output
             _capture_artifacts(db, run, stage.name, result.output)
+            emit_event(
+                db,
+                run_id=run.id,
+                kind="stage_complete",
+                stage_name=stage.name,
+                message=f"stage {stage.name} completed",
+                payload={"tokens": result.tokens, "outcome": result.outcome.value},
+            )
 
         db.commit()
         idx += 1
 
-    # Optional MR creation after successful develop (non-audit).
+    # Optional MR/PR creation after successful develop (non-audit).
     if (
         not failed
         and params.get("create_merge_request", True)
         and repo
-        and repo.provider.value == "gitlab"
-        and repo.gitlab_project_id
         and context.task.task_type != "audit"
         and context.get("develop").get("branch")
         and worktree_path
     ):
         try:
-            _publish_mr(db, run, task, repo, context)
-        except (GitLabError, ValueError, OSError) as exc:
+            if repo.provider == RepoProvider.gitlab and repo.gitlab_project_id:
+                _publish_mr(db, run, task, repo, context)
+            elif repo.provider == RepoProvider.github:
+                _publish_github_pr(db, run, task, repo, context, params)
+        except (GitLabError, GitHubError, ValueError, OSError) as exc:
             db.add(
                 Artifact(
                     run_id=run.id,
@@ -335,6 +369,12 @@ def execute_run(
                     name="mr-error.log",
                     content=str(exc),
                 )
+            )
+            emit_event(
+                db,
+                run_id=run.id,
+                kind="scm_error",
+                message=str(exc),
             )
             db.commit()
 
@@ -344,9 +384,96 @@ def execute_run(
     run.status = RunStatus.failed if failed else RunStatus.completed
     run.finished_at = _now()
     run.resume_from_index = idx
+    emit_event(
+        db,
+        run_id=run.id,
+        kind="run",
+        message=f"run {run.status.value}",
+        payload={"status": run.status.value, "tokens": run.total_tokens},
+    )
     db.commit()
     db.refresh(run)
     return run
+
+
+def _artifact_summary_markdown(run: WorkflowRun) -> str:
+    lines = ["## Artifacts", ""]
+    for art in run.artifacts:
+        if art.kind == "playwright":
+            lines.append(f"- Playwright: `{art.name}` → `{art.content}`")
+        elif art.kind == "report":
+            lines.append(f"- Report: `{art.name}`")
+        elif art.kind == "patch":
+            lines.append(f"- Patch: `{art.name}`")
+    if len(lines) == 2:
+        lines.append("_No binary artifacts recorded._")
+    return "\n".join(lines)
+
+
+def _publish_github_pr(
+    db: Session,
+    run: WorkflowRun,
+    task: Task,
+    repo: Repository,
+    context: WorkflowContext,
+    params: dict,
+) -> None:
+    token = reveal_repo_token(
+        db,
+        repository_id=repo.id,
+        token_encrypted=repo.token_encrypted,
+        purpose="push_and_create_pr",
+        actor="workflow-engine",
+    )
+    if not token:
+        raise ValueError("Repository has no token for PR creation")
+    parsed = parse_github_repo(repo.url)
+    if not parsed:
+        raise ValueError(f"Cannot parse GitHub owner/repo from {repo.url}")
+    owner, name = parsed
+    branch = context.get("develop")["branch"]
+    remote = authenticated_url(repo.url, token)
+    push_branch(context.worktree_path, remote, branch)
+    report = ""
+    art = next((a for a in run.artifacts if a.kind == "report"), None)
+    if art:
+        report = art.content
+    body = (report or task.description or task.title) + "\n\n" + _artifact_summary_markdown(run)
+    pr = create_pull_request(
+        token,
+        owner,
+        name,
+        title=f"[Change Factory] {task.title}",
+        head=branch,
+        base=task.base_branch or repo.default_branch,
+        body=body[:60000],
+        draft=bool(params.get("github_draft_pr", True)),
+    )
+    run.mr_url = pr.get("html_url")
+    if pr.get("number") is not None:
+        post_pr_comment(
+            token,
+            owner,
+            name,
+            int(pr["number"]),
+            body=f"Automated run `{run.id}` finished.\n\n{_artifact_summary_markdown(run)}",
+        )
+    db.add(
+        Artifact(
+            run_id=run.id,
+            kind="log",
+            name="pull-request.json",
+            content=str(pr),
+        )
+    )
+    emit_event(
+        db,
+        run_id=run.id,
+        kind="scm",
+        message=f"GitHub PR created: {run.mr_url}",
+        payload={"provider": "github", "draft": bool(params.get("github_draft_pr", True))},
+    )
+    db.commit()
 
 
 def _publish_mr(
@@ -395,6 +522,13 @@ def _publish_mr(
             name="merge-request.json",
             content=str(mr),
         )
+    )
+    emit_event(
+        db,
+        run_id=run.id,
+        kind="scm",
+        message=f"GitLab MR created: {run.mr_url}",
+        payload={"provider": "gitlab"},
     )
     db.commit()
 
