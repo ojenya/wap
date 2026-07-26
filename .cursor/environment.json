@@ -1,0 +1,6 @@
+{
+  "name": "wap-change-factory",
+  "install": "pnpm install\npython3 -m venv apps/api/.venv\napps/api/.venv/bin/pip install -e \"apps/api[dev]\"",
+  "start": "apps/api/.venv/bin/uvicorn app.main:app --reload --port 8000",
+  "terminals": []
+}

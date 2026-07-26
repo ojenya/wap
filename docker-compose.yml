@@ -1,0 +1,66 @@
+# Dev orchestration: run the whole platform from containers.
+#   docker compose up --build
+# Web UI -> http://localhost:5173 (proxies /api to the api service).
+# API    -> http://localhost:8000  (docs at /docs)
+#
+# opencode Zen/Go: export OPENCODE_API_KEY (and optionally OPENCODE_PLAN=zen|go,
+# OPENCODE_MODEL) before `up` to enable the real Implementation Agent; otherwise
+# the develop stage falls back to the deterministic stub.
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      APP_DATABASE_URL: "sqlite:////app/agentplatform.db"
+      APP_DATA_DIR: "/app/data"
+      APP_SECRET_KEY: "${APP_SECRET_KEY:-dev-only-change-me}"
+      APP_AUTH_REQUIRED: "${APP_AUTH_REQUIRED:-false}"
+      APP_BOOTSTRAP_ADMIN_KEY: "${APP_BOOTSTRAP_ADMIN_KEY:-dev-admin-key}"
+      APP_GITLAB_BASE_URL: "${GITLAB_BASE_URL:-https://gitlab.com}"
+      APP_GITLAB_OAUTH_CLIENT_ID: "${GITLAB_OAUTH_CLIENT_ID:-}"
+      APP_GITLAB_OAUTH_CLIENT_SECRET: "${GITLAB_OAUTH_CLIENT_SECRET:-}"
+      OPENCODE_API_KEY: "${OPENCODE_API_KEY:-}"
+      OPENCODE_PLAN: "${OPENCODE_PLAN:-zen}"
+      OPENCODE_MODEL: "${OPENCODE_MODEL:-opencode/qwen3-coder}"
+    volumes:
+      # Mount source for uvicorn --reload without clobbering installed deps.
+      - ./apps/api/app:/app/app
+      # Persistent git mirrors + per-run worktrees.
+      - ./data:/app/data
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      # Reach the API by its compose service name.
+      API_PROXY_TARGET: "http://api:8000"
+    depends_on:
+      - api
+    volumes:
+      - ./apps/web/src:/app/apps/web/src
+      - ./apps/web/index.html:/app/apps/web/index.html
+      - ./apps/web/vite.config.ts:/app/apps/web/vite.config.ts
+
+  # Optional Postgres + pgvector for the RAG phase. Start with:
+  #   docker compose --profile rag up
+  # then set APP_DATABASE_URL for the api service accordingly.
+  db:
+    image: pgvector/pgvector:pg16
+    profiles: ["rag"]
+    environment:
+      POSTGRES_USER: wap
+      POSTGRES_PASSWORD: wap
+      POSTGRES_DB: wap
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
