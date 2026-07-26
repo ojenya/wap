@@ -7,6 +7,7 @@ const tone: Record<string, "success" | "warning" | "danger" | "secondary" | "out
   pending: "secondary",
   awaiting_approval: "warning",
   failed: "danger",
+  cancelled: "secondary",
   error: "danger",
   skipped: "secondary",
   low: "success",

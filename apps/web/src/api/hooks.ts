@@ -56,6 +56,17 @@ export function useApproveRun(taskId: string) {
   });
 }
 
+export function useCancelRun(taskId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (runId: string) => api.cancelRun(runId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: taskKeys.detail(taskId) });
+      qc.invalidateQueries({ queryKey: ["events"] });
+    },
+  });
+}
+
 export function useCreateRepository() {
   const qc = useQueryClient();
   return useMutation({

@@ -60,7 +60,9 @@ and in the `scripts` of the root `package.json`. Don't duplicate them here.
   (e.g. `/app/data/demo-origin`), not the host `/workspace/...`.
 - Runs are **async by default** (`POST /api/tasks/{id}/runs`); use `?sync=true`
   in tests. High-risk tasks pause at `awaiting_approval` until
-  `POST /api/runs/{id}/approve`. UI polls task detail every 1.5s.
+  `POST /api/runs/{id}/approve`. Stop with `POST /api/runs/{id}/cancel`
+  (status `cancelled`; cooperative — current stage may finish, later stages
+  skip). UI: Task detail **Stop run** + timeline transcript. Polls every 1.5s.
 - Auth: `APP_AUTH_REQUIRED=false` (default) is open-dev mode with rate limits.
   Set `true` + `X-API-Key` (`APP_BOOTSTRAP_ADMIN_KEY`) for RBAC.
 - Safe workflow knobs live in `/api/workflow-config` (and Workflow page) — only

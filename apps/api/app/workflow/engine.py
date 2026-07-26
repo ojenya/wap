@@ -92,6 +92,61 @@ def run_workflow(db: Session, task: Task, version: str = DEFAULT_WORKFLOW) -> Wo
     return execute_run(db, run, task)
 
 
+def cancel_run(db: Session, run: WorkflowRun, actor: str = "operator") -> WorkflowRun:
+    """Request cooperative cancellation. Stops further stages; in-flight stage finishes first."""
+    if run.status not in {
+        RunStatus.pending,
+        RunStatus.running,
+        RunStatus.awaiting_approval,
+    }:
+        raise ValueError(f"Run cannot be cancelled from status={run.status.value}")
+
+    run.status = RunStatus.cancelled
+    run.finished_at = _now()
+    for stage_row in run.stages:
+        if stage_row.status in {StageStatus.running, StageStatus.pending}:
+            stage_row.status = StageStatus.skipped
+            stage_row.error = stage_row.error or f"cancelled by {actor}"
+            stage_row.finished_at = stage_row.finished_at or _now()
+
+    emit_event(
+        db,
+        run_id=run.id,
+        kind="run",
+        message=f"run cancelled by {actor}",
+        payload={"actor": actor},
+    )
+    db.commit()
+
+    task = db.get(Task, run.task_id)
+    if task and run.vm_instance_id:
+        try:
+            bound_env = environment_for_repository(db, task.repository_id)
+            manager = VmManager(db)
+            active_vm = manager.get_instance(run.vm_instance_id)
+            if bound_env and active_vm and active_vm.status.value == "running":
+                manager.destroy(active_vm, bound_env)
+                emit_event(
+                    db,
+                    run_id=run.id,
+                    kind="vm",
+                    message=f"destroyed vm {active_vm.id} after cancel",
+                    payload={"vm_instance_id": active_vm.id},
+                )
+                db.commit()
+        except VmBackendError as exc:
+            emit_event(db, run_id=run.id, kind="vm_error", message=str(exc))
+            db.commit()
+
+    db.refresh(run)
+    return run
+
+
+def _run_is_cancelled(db: Session, run: WorkflowRun) -> bool:
+    db.refresh(run)
+    return run.status == RunStatus.cancelled
+
+
 def approve_run(
     db: Session, run: WorkflowRun, actor: str = "operator", *, sync: bool = False
 ) -> WorkflowRun:
@@ -142,6 +197,9 @@ def execute_run(
     db: Session, run: WorkflowRun, task: Task, resume: bool = False
 ) -> WorkflowRun:
     params = effective_params(db)
+    db.refresh(run)
+    if run.status == RunStatus.cancelled:
+        return run
     run.status = RunStatus.running
     emit_event(
         db,
@@ -276,6 +334,9 @@ def execute_run(
     idx = start_index
 
     while idx < len(stages):
+        if _run_is_cancelled(db, run):
+            break
+
         stage = stages[idx]
 
         if stage.name not in enabled:
@@ -318,6 +379,8 @@ def execute_run(
         try:
             result = stage.run(context)
         except Exception as exc:  # noqa: BLE001
+            if _run_is_cancelled(db, run):
+                break
             execution.status = StageStatus.failed
             execution.error = str(exc)
             execution.finished_at = _now()
@@ -334,6 +397,17 @@ def execute_run(
             failed = True
             idx += 1
             continue
+
+        if _run_is_cancelled(db, run):
+            # In-flight stage finished; keep its result if useful, then stop.
+            if execution.status == StageStatus.running:
+                execution.status = StageStatus.skipped
+                execution.error = execution.error or "cancelled by operator"
+                execution.finished_at = _now()
+                execution.duration_ms = (time.perf_counter() - t0) * 1000
+                run.total_duration_ms += execution.duration_ms
+                db.commit()
+            break
 
         execution.duration_ms = (time.perf_counter() - t0) * 1000
         run.total_duration_ms += execution.duration_ms
@@ -394,9 +468,12 @@ def execute_run(
         db.commit()
         idx += 1
 
+    cancelled = _run_is_cancelled(db, run)
+
     # Optional MR/PR creation after successful develop (non-audit).
     if (
-        not failed
+        not cancelled
+        and not failed
         and params.get("create_merge_request", True)
         and repo
         and context.task.task_type != "audit"
@@ -426,13 +503,14 @@ def execute_run(
             db.commit()
 
     # Snapshot + destroy VM after the run (keeps env.snapshot_id warm).
+    # cancel_run may already have destroyed the VM — destroy is idempotent-ish.
     if run.vm_instance_id and params.get("vm_destroy_after_run", True):
         try:
             bound_env = environment_for_repository(db, task.repository_id)
             manager = VmManager(db)
             active_vm = manager.get_instance(run.vm_instance_id)
             if bound_env and active_vm and active_vm.status.value == "running":
-                if params.get("vm_snapshot_after_run", True):
+                if not cancelled and params.get("vm_snapshot_after_run", True):
                     manager.snapshot(active_vm, bound_env)
                 manager.destroy(active_vm, bound_env)
                 emit_event(
@@ -448,6 +526,25 @@ def execute_run(
     intake = context.outputs.get("intake", {})
     if intake.get("risk_level"):
         run.risk_level = RiskLevel(intake["risk_level"])
+
+    if cancelled:
+        run.status = RunStatus.cancelled
+        run.finished_at = run.finished_at or _now()
+        run.resume_from_index = idx
+        # Skip any stages never started so the UI doesn't look "stuck".
+        for later_i in range(idx, len(stages)):
+            later = stages[later_i]
+            row = next((s for s in run.stages if s.order_index == later_i), None)
+            if row is None:
+                _record_skipped(db, run, later_i, later.name, later.agent_role)
+            elif row.status in {StageStatus.pending, StageStatus.running}:
+                row.status = StageStatus.skipped
+                row.error = row.error or "cancelled by operator"
+                row.finished_at = row.finished_at or _now()
+        db.commit()
+        db.refresh(run)
+        return run
+
     run.status = RunStatus.failed if failed else RunStatus.completed
     run.finished_at = _now()
     run.resume_from_index = idx

@@ -53,6 +53,42 @@ def test_high_risk_awaits_approval(client):
     assert approved.json()["status"] == "completed"
 
 
+def test_cancel_run_at_approval_gate(client):
+    create = client.post(
+        "/api/tasks",
+        json={
+            "title": "Rotate the auth secret token",
+            "description": "Update password encryption keys",
+            "require_approval": True,
+        },
+    )
+    task_id = create.json()["id"]
+    run = client.post(f"/api/tasks/{task_id}/runs?sync=true").json()
+    assert run["status"] == "awaiting_approval"
+    cancelled = client.post(f"/api/runs/{run['id']}/cancel")
+    assert cancelled.status_code == 200
+    body = cancelled.json()
+    assert body["status"] == "cancelled"
+    assert body["finished_at"]
+    events = client.get(f"/api/runs/{run['id']}/events").json()
+    assert any("cancelled" in (e.get("message") or "") for e in events)
+    # Terminal — second cancel is rejected.
+    again = client.post(f"/api/runs/{run['id']}/cancel")
+    assert again.status_code == 400
+
+
+def test_cancel_rejects_completed_run(client):
+    create = client.post(
+        "/api/tasks",
+        json={"title": "Add CSV export to reports", "description": "Export table data"},
+    )
+    task_id = create.json()["id"]
+    run = client.post(f"/api/tasks/{task_id}/runs?sync=true").json()
+    assert run["status"] == "completed"
+    resp = client.post(f"/api/runs/{run['id']}/cancel")
+    assert resp.status_code == 400
+
+
 def test_task_validation_rejects_short_title(client):
     resp = client.post("/api/tasks", json={"title": "hi"})
     assert resp.status_code == 422

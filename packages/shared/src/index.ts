@@ -3,7 +3,8 @@ export type RunStatus =
   | "running"
   | "awaiting_approval"
   | "completed"
-  | "failed";
+  | "failed"
+  | "cancelled";
 export type StageStatus =
   | "pending"
   | "running"

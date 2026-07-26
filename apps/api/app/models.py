@@ -26,6 +26,7 @@ class RunStatus(enum.StrEnum):
     awaiting_approval = "awaiting_approval"
     completed = "completed"
     failed = "failed"
+    cancelled = "cancelled"
 
 
 class StageStatus(enum.StrEnum):
