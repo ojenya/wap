@@ -34,3 +34,17 @@ and in the `scripts` of the root `package.json`. Don't duplicate them here.
 - SQLite file `apps/api/agentplatform.db` is created on first run and is
   gitignored; delete it to reset local state. For the RAG phase, start
   `infra/docker-compose.yml` and set `APP_DATABASE_URL` to the Postgres DSN.
+- Docker run mode: `docker compose up --build` (root `docker-compose.yml`) runs
+  `api` (:8000) + `web` (:5173). It binds the same host ports as the local dev
+  servers, so stop the local tmux `api-dev`/`web-dev` sessions before `up` to
+  avoid port conflicts. Sources are bind-mounted for hot reload; a dependency
+  change requires a rebuild (`docker compose build`). Docker is NOT preinstalled
+  on the base VM — install it (with the DinD `fuse-overlayfs` + `iptables-legacy`
+  workarounds) only when you actually need containers.
+- opencode runner (`apps/api/app/workflow/opencode_runner.py`) is oriented to the
+  opencode Zen/Go plans; it only activates when `OPENCODE_API_KEY` is set AND the
+  `opencode` CLI is on PATH (baked into the API image at `/root/.opencode/bin`).
+  Otherwise `DevelopStage` falls back to the deterministic stub, so tests and the
+  no-key path stay reproducible. The runner's real coding session also needs an
+  isolated worktree path (`OpencodeRequest.workdir`) — currently `None` (the next
+  extension point).

@@ -61,3 +61,40 @@ pnpm --filter @wap/web dev   # http://localhost:5173 (proxies /api to :8000)
 - Build: `pnpm --filter @wap/web build`
 
 Start the backend first, then the frontend, and open http://localhost:5173.
+
+### Run from Docker
+
+Run the whole platform in containers (no local Python/Node/pnpm needed):
+
+```bash
+docker compose up --build      # web -> http://localhost:5173, api -> http://localhost:8000
+```
+
+Sources are mounted for hot reload (`uvicorn --reload`, Vite). The web container
+proxies `/api` to the `api` service via `API_PROXY_TARGET`. For the RAG phase,
+start Postgres + pgvector with `docker compose --profile rag up`.
+
+## opencode integration (Zen / Go)
+
+The Implementation Agent delegates code changes to the terminal-native
+[`opencode`](https://opencode.ai) CLI (installed in the API image), oriented to
+the **opencode Zen** (pay-per-use) or **opencode Go** (subscription) plans. Both
+share one credential and differ only by base URL:
+
+| Plan | `OPENCODE_PLAN` | Base URL |
+| --- | --- | --- |
+| Zen | `zen` (default) | `https://opencode.ai/zen/v1` |
+| Go | `go` | `https://opencode.ai/zen/go/v1` |
+
+Enable it by exporting env vars before starting the API (or `docker compose up`):
+
+```bash
+export OPENCODE_API_KEY=...          # from https://opencode.ai/auth
+export OPENCODE_PLAN=zen             # or "go"
+export OPENCODE_MODEL=opencode/qwen3-coder
+```
+
+When `OPENCODE_API_KEY` and the `opencode` CLI are both present, the `develop`
+stage runs a real headless `opencode run` session; otherwise it transparently
+falls back to a deterministic stub so the workflow always completes. The active
+mode/plan/model is recorded in the `develop` stage's `runner` output.
