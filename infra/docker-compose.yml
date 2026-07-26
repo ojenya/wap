@@ -1,0 +1,18 @@
+# Optional infrastructure for the RAG phase (plan step 3).
+# The MVP runs on SQLite with zero external services; start this only when you
+# begin implementing pgvector-backed retrieval, then point the API at it via:
+#   APP_DATABASE_URL=postgresql+psycopg://wap:wap@localhost:5432/wap
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: wap
+      POSTGRES_PASSWORD: wap
+      POSTGRES_DB: wap
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
