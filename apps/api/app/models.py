@@ -118,6 +118,7 @@ class WorkflowRun(Base):
     status: Mapped[RunStatus] = mapped_column(Enum(RunStatus), default=RunStatus.pending)
     risk_level: Mapped[RiskLevel | None] = mapped_column(Enum(RiskLevel), nullable=True)
     worktree_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    vm_instance_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     # Resume cursor for paused / retrying runs (stage index).
     resume_from_index: Mapped[int] = mapped_column(Integer, default=0)
     develop_iterations: Mapped[int] = mapped_column(Integer, default=0)
@@ -260,11 +261,17 @@ class SecretAccessLog(Base):
 # ---------------------------------------------------------------------------
 
 
+class EnvBackend(enum.StrEnum):
+    local = "local"
+    firecracker = "firecracker"
+
+
 class EnvironmentStatus(enum.StrEnum):
     draft = "draft"
     ready = "ready"
     refreshing = "refreshing"
     error = "error"
+    booting = "booting"
 
 
 class SecretScope(enum.StrEnum):
@@ -302,6 +309,12 @@ class Environment(Base):
     )
     update_script: Mapped[str] = mapped_column(Text, default="pnpm install\npip install -e .")
     agents_md_path: Mapped[str] = mapped_column(String(500), default="AGENTS.md")
+    # Prefer Firecracker; manager falls back to local when KVM/binary missing.
+    backend: Mapped[EnvBackend] = mapped_column(
+        Enum(EnvBackend), default=EnvBackend.firecracker
+    )
+    vcpu_count: Mapped[int] = mapped_column(Integer, default=2)
+    mem_size_mib: Mapped[int] = mapped_column(Integer, default=1024)
     snapshot_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     status: Mapped[EnvironmentStatus] = mapped_column(
         Enum(EnvironmentStatus), default=EnvironmentStatus.draft
@@ -407,3 +420,41 @@ class McpServer(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     tools_cache: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class VmStatus(enum.StrEnum):
+    creating = "creating"
+    running = "running"
+    paused = "paused"
+    snapshotting = "snapshotting"
+    restoring = "restoring"
+    stopped = "stopped"
+    error = "error"
+    destroyed = "destroyed"
+
+
+class VmInstance(Base):
+    """Booted microVM (Firecracker) or local jail bound to an Environment."""
+
+    __tablename__ = "vm_instances"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    environment_id: Mapped[str] = mapped_column(
+        ForeignKey("environments.id", ondelete="CASCADE")
+    )
+    run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    backend: Mapped[EnvBackend] = mapped_column(Enum(EnvBackend), default=EnvBackend.local)
+    status: Mapped[VmStatus] = mapped_column(Enum(VmStatus), default=VmStatus.creating)
+    # Host paths for the instance workspace / socket / snapshot.
+    work_dir: Mapped[str] = mapped_column(String(1000), default="")
+    socket_path: Mapped[str] = mapped_column(String(1000), default="")
+    pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    guest_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    snapshot_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    rootfs_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    # Worktree bind/mount target inside the VM (or local workspace).
+    workspace_path: Mapped[str] = mapped_column(String(1000), default="")
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

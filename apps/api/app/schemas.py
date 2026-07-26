@@ -99,6 +99,7 @@ class WorkflowRunOut(BaseModel):
     status: str
     risk_level: str | None
     worktree_path: str | None = None
+    vm_instance_id: str | None = None
     develop_iterations: int = 0
     approved_by: str | None = None
     mr_url: str | None = None

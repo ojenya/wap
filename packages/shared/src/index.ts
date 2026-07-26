@@ -163,12 +163,46 @@ export interface Environment {
   environment_json_path: string;
   update_script: string;
   agents_md_path: string;
+  backend: string;
+  vcpu_count: number;
+  mem_size_mib: number;
   snapshot_id: string | null;
   status: string;
   last_refresh_log: string;
   last_error: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface VmInstance {
+  id: string;
+  environment_id: string;
+  run_id: string | null;
+  backend: string;
+  status: string;
+  work_dir: string;
+  workspace_path: string;
+  socket_path: string;
+  pid: number | null;
+  guest_ip: string | null;
+  snapshot_path: string | null;
+  rootfs_path: string | null;
+  last_error: string | null;
+  meta: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VmCapabilities {
+  kvm: boolean;
+  firecracker_bin: string | null;
+  kernel: string | null;
+  rootfs: string | null;
+  mode: string;
+  can_boot_real: boolean;
+  can_emulate: boolean;
+  preferred_backend: string;
+  reason: string;
 }
 
 export interface Automation {

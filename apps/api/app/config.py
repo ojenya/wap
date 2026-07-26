@@ -76,6 +76,31 @@ class Settings(BaseSettings):
     playwright_enabled: bool = True
     playwright_timeout_seconds: int = 120
 
+    # Firecracker microVM environments
+    # mode: auto = real FC when KVM+binary available else emulate/local
+    #       emulate = exercise FC API paths without /dev/kvm (CI)
+    #       require = fail if Firecracker cannot boot
+    #       local = force local jail backend
+    firecracker_mode: Literal["auto", "emulate", "require", "local"] = Field(
+        default="auto",
+        validation_alias=AliasChoices("APP_FIRECRACKER_MODE", "FIRECRACKER_MODE"),
+    )
+    firecracker_bin: str = Field(
+        default="firecracker",
+        validation_alias=AliasChoices("APP_FIRECRACKER_BIN", "FIRECRACKER_BIN"),
+    )
+    firecracker_kernel: str = Field(
+        default="",
+        validation_alias=AliasChoices("APP_FIRECRACKER_KERNEL", "FIRECRACKER_KERNEL"),
+    )
+    firecracker_rootfs: str = Field(
+        default="",
+        validation_alias=AliasChoices("APP_FIRECRACKER_ROOTFS", "FIRECRACKER_ROOTFS"),
+    )
+    firecracker_boot_args: str = (
+        "console=ttyS0 reboot=k panic=1 pci=off"
+    )
+
     @property
     def opencode_base_url(self) -> str:
         return OPENCODE_BASE_URLS[self.opencode_plan]

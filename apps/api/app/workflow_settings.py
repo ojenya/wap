@@ -37,6 +37,9 @@ SAFE_PARAM_DEFAULTS: dict = {
     "parallel_subagents": True,
     "github_draft_pr": True,
     "computer_use_enabled": True,
+    "vm_enabled": True,
+    "vm_snapshot_after_run": True,
+    "vm_destroy_after_run": True,
     "opencode_plan": "zen",
     "opencode_model": "opencode/qwen3-coder",
     "report_sections": [

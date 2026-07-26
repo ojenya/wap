@@ -11,6 +11,8 @@ import type {
   RunEvent,
   Task,
   TaskDetail,
+  VmCapabilities,
+  VmInstance,
   WorkflowConfig,
   WorkflowRun,
   Artifact,
@@ -80,10 +82,26 @@ export const api = {
       { method: "POST" },
     ),
   listEnvironments: () => request<Environment[]>("/environments"),
-  createEnvironment: (input: { name: string; update_script?: string; repository_id?: string }) =>
+  createEnvironment: (input: {
+    name: string;
+    update_script?: string;
+    repository_id?: string;
+    backend?: string;
+  }) =>
     request<Environment>("/environments", { method: "POST", body: JSON.stringify(input) }),
   refreshEnvironment: (id: string) =>
     request<Environment>(`/environments/${id}/refresh`, { method: "POST" }),
+  vmCapabilities: () => request<VmCapabilities>("/environments/capabilities"),
+  bootVm: (envId: string, body: Record<string, unknown> = {}) =>
+    request<VmInstance>(`/environments/${envId}/vms/boot`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  destroyVm: (envId: string, vmId: string) =>
+    request<VmInstance>(`/environments/${envId}/vms/${vmId}/destroy`, { method: "POST" }),
+  snapshotVm: (envId: string, vmId: string) =>
+    request<VmInstance>(`/environments/${envId}/vms/${vmId}/snapshot`, { method: "POST" }),
+  listVms: (envId: string) => request<VmInstance[]>(`/environments/${envId}/vms`),
   listAutomations: () => request<Automation[]>("/automations"),
   createAutomation: (input: Record<string, unknown>) =>
     request<Automation>("/automations", { method: "POST", body: JSON.stringify(input) }),

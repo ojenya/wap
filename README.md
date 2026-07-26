@@ -14,12 +14,13 @@ This repository implements a working platform covering the plan end-to-end:
 - OpenAI-like **shadcn/ui** web app (Dashboard, Tasks, Repositories, Learning,
   Workflow settings).
 
-Cursor Cloud–inspired platform layer (see `docs/PLATFORM_PLAN.md`): environment
-snapshots + update scripts, secrets vault + egress policy, artifact gallery,
-run transcript, HITL comments/steer, parallel subagents, automations
-(webhook/cron), GitHub draft PRs + GitLab MRs, MCP registry, desktop
-verification seam. Deterministic stubs keep the lifecycle runnable without
-external credentials; real adapters plug in at the documented seams.
+Cursor Cloud–inspired platform layer (see `docs/PLATFORM_PLAN.md`): **Firecracker
+microVM environments** (boot/snapshot/restore/destroy; emulates without KVM),
+secrets vault + egress policy, artifact gallery, run transcript, HITL
+comments/steer, parallel subagents, automations (webhook/cron), GitHub draft
+PRs + GitLab MRs, MCP registry, desktop verification seam. Deterministic stubs
+keep the lifecycle runnable without external credentials; real adapters plug in
+at the documented seams.
 
 ## Monorepo layout
 

@@ -10,6 +10,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
+from app.environments import environment_for_repository
 from app.events import emit_event
 from app.git_workspace import GitWorkspaceError, GitWorkspaceManager, authenticated_url
 from app.github_client import GitHubError, create_pull_request, parse_github_repo, post_pr_comment
@@ -28,6 +29,8 @@ from app.models import (
 )
 from app.rag import index_worktree
 from app.security import reveal_repo_token
+from app.vm.backends import VmBackendError
+from app.vm.manager import VmManager
 from app.workflow.contracts import StageOutcome, TaskInput, WorkflowContext
 from app.workflow.registry import DEFAULT_WORKFLOW, build_workflow
 from app.workflow_settings import effective_params
@@ -197,6 +200,48 @@ def execute_run(
         # Intersection semantics when both set; else repo filters.
         path_filters = path_filters or list(repo.path_filters)
 
+    # Boot Firecracker/local VM for the repository environment when configured.
+    vm_instance_id = run.vm_instance_id or ""
+    vm_backend = ""
+    if worktree_path and not resume:
+        env = environment_for_repository(db, task.repository_id)
+        if env and params.get("vm_enabled", True):
+            try:
+                manager = VmManager(db)
+                vm = manager.boot(
+                    env,
+                    run_id=run.id,
+                    workspace_src=worktree_path,
+                    restore_snapshot=bool(env.snapshot_id),
+                )
+                vm_instance_id = vm.id
+                vm_backend = vm.backend.value
+                run.vm_instance_id = vm.id
+                # Stages operate on the VM workspace mirror.
+                worktree_path = vm.workspace_path
+                run.worktree_path = worktree_path
+                emit_event(
+                    db,
+                    run_id=run.id,
+                    kind="vm",
+                    message=f"booted {vm_backend} vm {vm.id}",
+                    payload={
+                        "vm_instance_id": vm.id,
+                        "backend": vm_backend,
+                        "emulated": bool((vm.meta or {}).get("emulated")),
+                        "workspace_path": vm.workspace_path,
+                    },
+                )
+                db.commit()
+            except VmBackendError as exc:
+                emit_event(
+                    db,
+                    run_id=run.id,
+                    kind="vm_error",
+                    message=str(exc),
+                )
+                db.commit()
+
     context = WorkflowContext(
         task=TaskInput(
             id=task.id,
@@ -211,6 +256,8 @@ def execute_run(
         ),
         run_id=run.id,
         worktree_path=worktree_path or "",
+        vm_instance_id=vm_instance_id,
+        vm_backend=vm_backend,
         head_sha=head_sha,
         workflow_params=params,
     )
@@ -377,6 +424,26 @@ def execute_run(
                 message=str(exc),
             )
             db.commit()
+
+    # Snapshot + destroy VM after the run (keeps env.snapshot_id warm).
+    if run.vm_instance_id and params.get("vm_destroy_after_run", True):
+        try:
+            bound_env = environment_for_repository(db, task.repository_id)
+            manager = VmManager(db)
+            active_vm = manager.get_instance(run.vm_instance_id)
+            if bound_env and active_vm and active_vm.status.value == "running":
+                if params.get("vm_snapshot_after_run", True):
+                    manager.snapshot(active_vm, bound_env)
+                manager.destroy(active_vm, bound_env)
+                emit_event(
+                    db,
+                    run_id=run.id,
+                    kind="vm",
+                    message=f"destroyed vm {active_vm.id}",
+                    payload={"vm_instance_id": active_vm.id},
+                )
+        except VmBackendError as exc:
+            emit_event(db, run_id=run.id, kind="vm_error", message=str(exc))
 
     intake = context.outputs.get("intake", {})
     if intake.get("risk_level"):

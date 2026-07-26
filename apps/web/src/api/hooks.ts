@@ -115,7 +115,7 @@ export function useEnvironments() {
 export function useCreateEnvironment() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { name: string; update_script?: string }) =>
+    mutationFn: (input: { name: string; update_script?: string; backend?: string }) =>
       api.createEnvironment(input),
     onSuccess: () => qc.invalidateQueries({ queryKey: envKeys.all }),
   });

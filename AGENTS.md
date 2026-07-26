@@ -83,5 +83,12 @@ and in the `scripts` of the root `package.json`. Don't duplicate them here.
   HITL transcript (`/api/runs/{id}/events|comments|steer`), Automations
   (`/api/automations`), MCP (`/api/mcp`), GitHub draft PRs, parallel subagents
   in analysis, desktop verification session on sandbox_qa.
+- **Firecracker VMs:** `app/vm/` — capabilities at
+  `GET /api/environments/capabilities`. Lifecycle:
+  `.../vms/boot|snapshot|restore|destroy|exec`. Set
+  `APP_FIRECRACKER_MODE=emulate` in CI (default `auto` emulates when KVM/assets
+  missing). For real microVMs on a KVM host: install `firecracker`, set
+  `APP_FIRECRACKER_KERNEL` + `APP_FIRECRACKER_ROOTFS`, mode `auto`/`require`.
+  Repo-linked Environments boot a VM per run; stages use `vm.workspace_path`.
 - Web pages: Environments + Automations in the sidebar; Task detail shows
   transcript, HITL panel, artifact gallery, desktop instructions.

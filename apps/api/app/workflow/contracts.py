@@ -45,6 +45,8 @@ class WorkflowContext(BaseModel):
     task: TaskInput
     run_id: str = ""
     worktree_path: str = ""
+    vm_instance_id: str = ""
+    vm_backend: str = ""
     head_sha: str = ""
     workflow_params: dict[str, Any] = Field(default_factory=dict)
     outputs: dict[str, dict[str, Any]] = Field(default_factory=dict)

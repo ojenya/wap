@@ -20,9 +20,17 @@ steering, parallelism, automations, dual SCM, MCP tools, and desktop verificatio
 | 10 | Computer-use verification | `computer_use` | desktop session seam after Playwright |
 
 ## Non-goals (this iteration)
-- Real multi-VM hypervisor / Firecracker
 - Full MCP OAuth broker
 - Production cron scheduler daemon (API-trigger + due-scan only)
+
+## Firecracker environments (added)
+- Backends: `firecracker` (preferred) | `local`
+- Modes: `APP_FIRECRACKER_MODE=auto|emulate|require|local`
+- Lifecycle API: boot / snapshot / restore / destroy / exec
+- Workflow boots a VM for repo-bound Environments and runs stages against
+  `vm.workspace_path`; snapshots after the run when enabled
+- Without `/dev/kvm` + kernel/rootfs, `auto`/`emulate` still exercise the
+  Firecracker API lifecycle for CI and local agents
 
 ## Testing strategy
 - Unit/integration: every new router + service via pytest
