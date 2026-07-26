@@ -1,10 +1,4 @@
-"""Stage input/output contracts and the shared workflow context.
-
-Every stage declares an explicit contract: it reads from and writes to a
-``WorkflowContext`` blackboard, returns a ``StageResult`` with a status,
-structured output, cited evidence and a (mock) token cost. This mirrors the
-plan's requirement that every decision be traceable.
-"""
+"""Stage input/output contracts and the shared workflow context."""
 
 from __future__ import annotations
 
@@ -29,6 +23,7 @@ class TaskInput(BaseModel):
     repo_url: str = ""
     base_branch: str = "main"
     task_type: str = "bug_fix"
+    repository_id: str | None = None
 
 
 class StageOutcome(StrEnum):
@@ -49,7 +44,11 @@ class WorkflowContext(BaseModel):
     """Blackboard shared across stages during a single run."""
 
     task: TaskInput
-    # Structured outputs keyed by stage name, so later stages can read earlier ones.
+    # Absolute path to the per-run git worktree (set by the engine when a
+    # connected repository is attached). Empty string means no worktree.
+    worktree_path: str = ""
+    head_sha: str = ""
+    # Structured outputs keyed by stage name.
     outputs: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
     def get(self, stage_name: str) -> dict[str, Any]:

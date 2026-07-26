@@ -1,5 +1,4 @@
 // Shared domain contracts between the orchestrator API and the web UI.
-// Mirrors the Pydantic schemas in apps/api/app/schemas.py.
 
 export type RunStatus = "pending" | "running" | "completed" | "failed";
 export type StageStatus =
@@ -9,8 +8,8 @@ export type StageStatus =
   | "failed"
   | "skipped";
 export type RiskLevel = "low" | "medium" | "high";
-
-export type TaskType = "bug_fix" | "feature" | "refactor" | "chore";
+export type RepoStatus = "pending" | "ready" | "error";
+export type RepoProvider = "gitlab" | "github" | "git";
 
 export interface Evidence {
   source: string;
@@ -18,10 +17,33 @@ export interface Evidence {
   reason?: string;
 }
 
+export interface Repository {
+  id: string;
+  name: string;
+  url: string;
+  provider: RepoProvider | string;
+  default_branch: string;
+  status: RepoStatus | string;
+  last_error: string | null;
+  last_synced_at: string | null;
+  head_sha: string | null;
+  created_at: string;
+  has_token: boolean;
+}
+
+export interface CreateRepositoryInput {
+  name: string;
+  url: string;
+  default_branch?: string;
+  token?: string;
+  provider?: string;
+}
+
 export interface Task {
   id: string;
   title: string;
   description: string;
+  repository_id: string | null;
   repo_url: string;
   base_branch: string;
   task_type: string;
@@ -58,6 +80,7 @@ export interface WorkflowRun {
   workflow_version: string;
   status: RunStatus;
   risk_level: RiskLevel | null;
+  worktree_path?: string | null;
   created_at: string;
   finished_at: string | null;
   total_tokens: number;
@@ -72,6 +95,7 @@ export interface TaskDetail extends Task {
 export interface CreateTaskInput {
   title: string;
   description?: string;
+  repository_id?: string | null;
   repo_url?: string;
   base_branch?: string;
   task_type?: string;

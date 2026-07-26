@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import Task, WorkflowRun
+from app.models import Repository, Task, WorkflowRun
 from app.schemas import TaskCreate, TaskDetailOut, TaskOut, WorkflowRunOut
 from app.workflow.engine import run_workflow
 from app.workflow.registry import WORKFLOWS
@@ -26,7 +26,14 @@ def list_workflows() -> dict[str, list[str]]:
 
 @router.post("/tasks", response_model=TaskOut, status_code=201)
 def create_task(payload: TaskCreate, db: Session = Depends(get_db)) -> Task:
-    task = Task(**payload.model_dump())
+    data = payload.model_dump()
+    if data.get("repository_id"):
+        repo = db.get(Repository, data["repository_id"])
+        if repo is None:
+            raise HTTPException(status_code=404, detail="Repository not found")
+        data["repo_url"] = data["repo_url"] or repo.url
+        data["base_branch"] = data["base_branch"] or repo.default_branch
+    task = Task(**data)
     db.add(task)
     db.commit()
     db.refresh(task)
@@ -51,7 +58,6 @@ def start_run(task_id: str, db: Session = Depends(get_db)) -> WorkflowRun:
     task = db.get(Task, task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
-    # MVP runs the deterministic workflow synchronously; a worker/queue plugs in here.
     return run_workflow(db, task)
 
 

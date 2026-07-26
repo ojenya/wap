@@ -27,6 +27,11 @@ class Settings(BaseSettings):
 
     app_name: str = "Multi-Agent Change Factory"
     database_url: str = "sqlite:///./agentplatform.db"
+    # Root for git mirrors + per-run worktrees (absolute or relative to CWD).
+    data_dir: str = "./data"
+    # Fernet key for encrypting git tokens at rest. Auto-derived from a default
+    # seed in local/dev; set APP_SECRET_KEY in any shared environment.
+    secret_key: str = "dev-only-change-me"
     # CORS origins for the Vite dev server.
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
     # Max opencode develop -> test -> fix iterations (plan: 2-3).

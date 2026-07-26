@@ -27,10 +27,12 @@ and in the `scripts` of the root `package.json`. Don't duplicate them here.
 - pnpm blocks package build scripts by default; `esbuild` (needed by Vite) is
   allow-listed via `pnpm.onlyBuiltDependencies` in the root `package.json`. If
   Vite fails to start with an esbuild error, run `pnpm install` again.
-- The workflow is intentionally deterministic and needs NO API keys/LLM/network:
-  every agent in `apps/api/app/workflow/stages.py` is a rule-based stub with a
-  `# EXTENSION POINT` comment marking where a real LLM/RAG/opencode/Playwright
-  implementation plugs in. Keep new real integrations behind those seams.
+- The workflow is intentionally deterministic without API keys. Stages in
+  `apps/api/app/workflow/stages.py` are rule-based stubs with `# EXTENSION POINT`
+  seams — except **git worktrees are real**: when a Task has `repository_id`,
+  the engine clones/fetches a mirror and creates
+  `APP_DATA_DIR/worktrees/<run_id>` before stages run. Develop writes a stub
+  patch into that worktree (or a real `opencode run` if configured).
 - SQLite file `apps/api/agentplatform.db` is created on first run and is
   gitignored; delete it to reset local state. For the RAG phase, start
   `infra/docker-compose.yml` and set `APP_DATABASE_URL` to the Postgres DSN.
@@ -42,9 +44,14 @@ and in the `scripts` of the root `package.json`. Don't duplicate them here.
   on the base VM — install it (with the DinD `fuse-overlayfs` + `iptables-legacy`
   workarounds) only when you actually need containers.
 - opencode runner (`apps/api/app/workflow/opencode_runner.py`) is oriented to the
-  opencode Zen/Go plans; it only activates when `OPENCODE_API_KEY` is set AND the
-  `opencode` CLI is on PATH (baked into the API image at `/root/.opencode/bin`).
-  Otherwise `DevelopStage` falls back to the deterministic stub, so tests and the
-  no-key path stay reproducible. The runner's real coding session also needs an
-  isolated worktree path (`OpencodeRequest.workdir`) — currently `None` (the next
-  extension point).
+  opencode Zen/Go plans; it activates when `OPENCODE_API_KEY` is set AND the
+  `opencode` CLI is on PATH (baked into the API image at `/root/.opencode/bin`)
+  AND a worktree path is available. Otherwise Develop falls back to a
+  worktree-stub (real `git diff`) or a synthetic stub (no repo attached).
+- UI is OpenAI-like via **shadcn/ui** (Radix + Tailwind + CVA). Components live
+  under `apps/web/src/components/ui/` (copied into the repo — no runtime dependency
+  on a shadcn registry). Prefer extending those primitives over reintroducing
+  styled-components.
+- Connected repos: `POST /api/repositories` (also the Repositories page). For a
+  local path when the API runs in Docker, use the container path under the
+  mounted volume (e.g. `/app/data/demo-origin`), not the host `/workspace/...`.

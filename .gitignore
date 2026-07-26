@@ -13,7 +13,9 @@ venv/
 .mypy_cache/
 .ruff_cache/
 
-# Local DB / env
+# Local DB / env / git mirrors+worktrees
 *.db
 .env
 .env.local
+data/
+apps/api/data/

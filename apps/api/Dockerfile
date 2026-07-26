@@ -7,7 +7,10 @@ WORKDIR /app
 # git: opencode worktrees/diffs. curl/unzip/ca-certificates: opencode installer.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git curl ca-certificates unzip \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    # Host-mounted repos may be owned by a different uid; allow the container git
+    # to work with them without interactive prompts.
+    && git config --global --add safe.directory '*'
 
 # opencode CLI (Implementation Agent), oriented to the opencode Zen/Go plans.
 # Non-fatal: the image still builds offline; the runner detects availability at

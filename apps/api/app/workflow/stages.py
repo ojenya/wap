@@ -8,6 +8,9 @@ exposes clear seams (``# EXTENSION POINT``) where a production agent plugs in.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from app.git_workspace import GitWorkspaceManager
 from app.workflow.base import Stage
 from app.workflow.contracts import Evidence, StageResult, WorkflowContext
 from app.workflow.opencode_runner import OpencodeRequest, get_runner
@@ -70,21 +73,41 @@ class RepositoryContextStage(Stage):
     agent_role = "Repository Intelligence (RAG)"
 
     def run(self, context: WorkflowContext) -> StageResult:
-        # EXTENSION POINT: replace with hybrid retrieval (embeddings + BM25 +
-        # symbol graph) over a commit-aware pgvector index.
+        # Prefer real files from the per-run worktree when a repository is
+        # connected. Full hybrid RAG (embeddings + BM25 + symbol graph) plugs
+        # in here later; for now we do keyword ranking over tracked paths.
         intake = context.get("intake")
         keywords = intake.get("keywords", [])
-        retrieved = [f"src/{kw}.ts" for kw in keywords[:3]] or ["src/index.ts"]
-        retrieved += ["tests/" + f.split("/")[-1].replace(".ts", ".test.ts") for f in retrieved]
+        source = "synthetic"
+        if context.worktree_path:
+            files = GitWorkspaceManager().list_source_files(Path(context.worktree_path))
+            if files:
+                scored = sorted(
+                    files,
+                    key=lambda p: sum(1 for k in keywords if k in p.lower()),
+                    reverse=True,
+                )
+                retrieved = scored[:6] or files[:6]
+                source = "worktree"
+            else:
+                retrieved = [f"src/{kw}.ts" for kw in keywords[:3]] or ["src/index.ts"]
+        else:
+            retrieved = [f"src/{kw}.ts" for kw in keywords[:3]] or ["src/index.ts"]
+            retrieved += [
+                "tests/" + f.split("/")[-1].replace(".ts", ".test.ts") for f in retrieved
+            ]
         evidence = [
-            Evidence(source="rag", reference=path, reason="semantic + BM25 match")
+            Evidence(source=source, reference=path, reason="path/keyword match")
             for path in retrieved
         ]
         return StageResult(
             output={
-                "retrieval_strategy": "hybrid (semantic + bm25 + dependency graph)",
+                "retrieval_strategy": "worktree keyword rank" if source == "worktree"
+                else "synthetic (no repository attached)",
                 "retrieved_files": retrieved,
-                "commit_pinned": True,
+                "commit_pinned": bool(context.head_sha),
+                "head_sha": context.head_sha or None,
+                "worktree_path": context.worktree_path or None,
             },
             evidence=evidence,
             tokens=_tokens(retrieved),
@@ -192,14 +215,27 @@ class DevelopStage(Stage):
     agent_role = "Implementation Agent (opencode runner)"
 
     def run(self, context: WorkflowContext) -> StageResult:
+        # Audit-oriented tasks skip mutating the worktree.
+        if context.task.task_type == "audit":
+            return StageResult(
+                output={
+                    "branch": None,
+                    "changed_files": [],
+                    "diff": "",
+                    "commands_executed": [],
+                    "iterations": 0,
+                    "skipped": True,
+                    "reason": "audit tasks are read-only; develop stage skipped",
+                    "worktree_path": context.worktree_path or None,
+                },
+                evidence=[Evidence(source="policy", reference="audit-readonly")],
+                tokens=10,
+            )
+
         affected = context.get("analysis").get("affected_files", ["src/index.ts"])
         slug = context.task.title.strip().replace(" ", "_").lower()[:40] or "change"
+        workdir = context.worktree_path or None
 
-        # Delegate to the opencode runner (oriented to opencode Zen/Go). When the
-        # opencode CLI + API key are configured and an isolated worktree is
-        # provided, this performs a real coding session; otherwise it reports
-        # "unavailable" and we fall back to the deterministic stub below so the
-        # workflow always runs.
         runner = get_runner()
         req = OpencodeRequest(
             task_title=context.task.title,
@@ -207,7 +243,7 @@ class DevelopStage(Stage):
             acceptance_criteria=context.get("spec").get("acceptance_criteria", []),
             allowed_files=affected,
             base_branch=context.task.base_branch,
-            workdir=None,  # EXTENSION POINT: pass a real checkout path here.
+            workdir=workdir,
         )
         result = runner.run(req)
 
@@ -215,10 +251,27 @@ class DevelopStage(Stage):
             diff = result.diff
             changed = result.changed_files or affected
             commands = result.commands_executed
+            develop_mode = "opencode"
+        elif workdir:
+            # Real worktree, no opencode key: apply a deterministic stub *inside*
+            # the worktree so the artifact is a genuine git diff.
+            target = affected[0]
+            stub = (
+                f"// Implements: {context.task.title}\n"
+                f"export function {slug}() {{\n"
+                f"  // worktree stub (opencode runner not configured)\n"
+                f"  return true;\n"
+                f"}}\n"
+            )
+            diff = GitWorkspaceManager().write_stub_change(Path(workdir), target, stub)
+            changed = [target]
+            commands = ["git worktree add", "stub patch applied in worktree"]
+            develop_mode = "worktree-stub"
         else:
             diff = self._stub_patch(affected[0], context.task.title, slug)
             changed = affected
-            commands = ["git checkout -b", "opencode run --format json --agent build"]
+            commands = ["synthetic stub (no repository / worktree)"]
+            develop_mode = "synthetic-stub"
 
         return StageResult(
             output={
@@ -227,6 +280,8 @@ class DevelopStage(Stage):
                 "diff": diff,
                 "commands_executed": commands,
                 "iterations": 1,
+                "develop_mode": develop_mode,
+                "worktree_path": workdir,
                 "runner": {
                     "mode": result.mode,
                     "available": result.available,
@@ -246,7 +301,7 @@ class DevelopStage(Stage):
             "@@\n"
             f"+// Implements: {title}\n"
             f"+export function {slug}() {{\n"
-            "+  // deterministic MVP stub (opencode runner not configured)\n"
+            "+  // deterministic MVP stub (no worktree)\n"
             "+  return true;\n"
             "+}\n"
         )

@@ -15,12 +15,16 @@ services:
       - "8000:8000"
     environment:
       APP_DATABASE_URL: "sqlite:////app/agentplatform.db"
+      APP_DATA_DIR: "/app/data"
+      APP_SECRET_KEY: "${APP_SECRET_KEY:-dev-only-change-me}"
       OPENCODE_API_KEY: "${OPENCODE_API_KEY:-}"
       OPENCODE_PLAN: "${OPENCODE_PLAN:-zen}"
       OPENCODE_MODEL: "${OPENCODE_MODEL:-opencode/qwen3-coder}"
     volumes:
       # Mount source for uvicorn --reload without clobbering installed deps.
       - ./apps/api/app:/app/app
+      # Persistent git mirrors + per-run worktrees.
+      - ./data:/app/data
 
   web:
     build:

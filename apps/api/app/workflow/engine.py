@@ -1,9 +1,7 @@
 """Workflow engine: runs the stage graph and persists a full trace.
 
-Executes stages sequentially, recording each stage's structured input/output,
-status, duration and token cost as ``StageExecution`` rows, and emitting
-report/patch artifacts. If a stage fails, the run is marked failed and
-remaining stages are skipped.
+When the task is bound to a connected Repository, the engine prepares an
+isolated git worktree before stages run and records its path on the run.
 """
 
 from __future__ import annotations
@@ -13,8 +11,11 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
+from app.git_workspace import GitWorkspaceError, GitWorkspaceManager
 from app.models import (
     Artifact,
+    Repository,
+    RepoStatus,
     RiskLevel,
     RunStatus,
     StageExecution,
@@ -37,15 +38,62 @@ def run_workflow(db: Session, task: Task, version: str = DEFAULT_WORKFLOW) -> Wo
     db.commit()
     db.refresh(run)
 
+    worktree_path = ""
+    head_sha = ""
+    repo_url = task.repo_url
+    if task.repository_id:
+        repo = db.get(Repository, task.repository_id)
+        if repo is None:
+            run.status = RunStatus.failed
+            run.finished_at = _now()
+            db.commit()
+            db.refresh(run)
+            return run
+        repo_url = repo.url
+        try:
+            info = GitWorkspaceManager().create_worktree(
+                repo, run_id=run.id, branch=task.base_branch or repo.default_branch
+            )
+            worktree_path = str(info.path)
+            head_sha = info.head_sha
+            run.worktree_path = worktree_path
+            repo.status = RepoStatus.ready
+            repo.head_sha = head_sha
+            repo.last_synced_at = _now()
+            repo.last_error = None
+            db.commit()
+        except GitWorkspaceError as exc:
+            repo.status = RepoStatus.error
+            repo.last_error = str(exc)
+            run.status = RunStatus.failed
+            run.finished_at = _now()
+            db.add(
+                StageExecution(
+                    run_id=run.id,
+                    order_index=0,
+                    name="worktree",
+                    agent_role="Git Workspace",
+                    status=StageStatus.failed,
+                    error=str(exc),
+                    finished_at=_now(),
+                )
+            )
+            db.commit()
+            db.refresh(run)
+            return run
+
     context = WorkflowContext(
         task=TaskInput(
             id=task.id,
             title=task.title,
             description=task.description,
-            repo_url=task.repo_url,
+            repo_url=repo_url,
             base_branch=task.base_branch,
             task_type=task.task_type,
-        )
+            repository_id=task.repository_id,
+        ),
+        worktree_path=worktree_path,
+        head_sha=head_sha,
     )
 
     stages = build_workflow(version)

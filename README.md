@@ -31,8 +31,8 @@ zero external credentials.
 
 - **Backend:** Python 3.11+, FastAPI, SQLAlchemy 2.0, Pydantic v2. Storage is
   SQLite by default; switch `APP_DATABASE_URL` to Postgres/pgvector for RAG.
-- **Frontend:** React 18, TypeScript, Vite 5, TanStack Query, styled-components,
-  react-hook-form + Yup.
+- **Frontend:** React 18, TypeScript, Vite 5, TanStack Query, **shadcn/ui**
+  (Radix + Tailwind), react-hook-form + Yup. OpenAI-like light UI.
 
 ## Getting started
 
@@ -71,8 +71,33 @@ docker compose up --build      # web -> http://localhost:5173, api -> http://loc
 ```
 
 Sources are mounted for hot reload (`uvicorn --reload`, Vite). The web container
-proxies `/api` to the `api` service via `API_PROXY_TARGET`. For the RAG phase,
-start Postgres + pgvector with `docker compose --profile rag up`.
+proxies `/api` to the `api` service via `API_PROXY_TARGET`. Git mirrors and
+per-run worktrees persist under `./data` (mounted into the API container).
+For the RAG phase, start Postgres + pgvector with `docker compose --profile rag up`.
+
+## Connect a repository (GitLab / GitHub / git)
+
+Use the **Repositories** page in the UI, or the API:
+
+```bash
+curl -X POST http://localhost:8000/api/repositories \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "payments-service",
+    "url": "https://gitlab.com/org/project.git",
+    "default_branch": "main",
+    "token": "glpat-..."
+  }'
+```
+
+Tokens are encrypted at rest (`APP_SECRET_KEY`). Provider is auto-detected from
+the URL. On connect the API clones a durable mirror under `APP_DATA_DIR/mirrors/`;
+every workflow run then creates an **isolated git worktree** under
+`APP_DATA_DIR/worktrees/<run_id>` — this is how audit/develop actually touch code.
+
+- **audit** tasks are read-only (develop stage skipped).
+- **feature / bug_fix / …** write into the worktree (real `opencode run` when
+  `OPENCODE_API_KEY` is set, otherwise a deterministic stub patch + `git diff`).
 
 ## opencode integration (Zen / Go)
 

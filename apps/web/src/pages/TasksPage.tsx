@@ -1,132 +1,181 @@
 import { yupResolver } from "@hookform/resolvers/yup";
+import { Loader2 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { Link } from "react-router-dom";
-import styled from "styled-components";
 import * as yup from "yup";
 
-import { StatusBadge } from "../components/StatusBadge";
+import { useCreateTask, useRepositories, useTasks } from "@/api/hooks";
+import { StatusBadge } from "@/components/StatusBadge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
-  Button,
-  Card,
-  ErrorText,
-  Field,
-  Input,
-  Label,
-  Muted,
-  Textarea,
-} from "../components/ui";
-import { useCreateTask, useTasks } from "../api/hooks";
-
-const Grid = styled.div`
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: ${({ theme }) => theme.space(6)};
-  align-items: start;
-  @media (max-width: 820px) {
-    grid-template-columns: 1fr;
-  }
-`;
-
-const TaskRow = styled(Link)`
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: ${({ theme }) => theme.space(3)} ${({ theme }) => theme.space(4)};
-  border: 1px solid ${({ theme }) => theme.colors.border};
-  border-radius: 8px;
-  color: ${({ theme }) => theme.colors.text};
-  margin-bottom: ${({ theme }) => theme.space(2)};
-  &:hover {
-    border-color: ${({ theme }) => theme.colors.accent};
-  }
-`;
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 
 const schema = yup.object({
-  title: yup.string().required("Title is required").min(3, "At least 3 characters"),
+  title: yup.string().required("Title is required").min(3),
   description: yup.string().default(""),
-  repo_url: yup.string().url("Must be a valid URL").default("").transform((v) => v || ""),
-  task_type: yup.string().default("bug_fix"),
+  repository_id: yup.string().nullable().default(null),
+  task_type: yup.string().default("feature"),
 });
 
-const TASK_TYPES = ["bug_fix", "feature", "refactor", "chore"];
+type FormValues = yup.InferType<typeof schema>;
 
-type TaskFormValues = yup.InferType<typeof schema>;
+const TASK_TYPES = [
+  { value: "audit", label: "Audit (read-only)" },
+  { value: "bug_fix", label: "Bug fix" },
+  { value: "feature", label: "Feature" },
+  { value: "refactor", label: "Refactor" },
+  { value: "chore", label: "Chore" },
+];
 
 export function TasksPage() {
   const tasks = useTasks();
+  const repos = useRepositories();
   const createTask = useCreateTask();
 
   const {
     register,
     handleSubmit,
     reset,
+    setValue,
+    watch,
     formState: { errors },
-  } = useForm<TaskFormValues>({
+  } = useForm<FormValues>({
     resolver: yupResolver(schema),
-    defaultValues: { title: "", description: "", repo_url: "", task_type: "bug_fix" },
+    defaultValues: {
+      title: "",
+      description: "",
+      repository_id: null,
+      task_type: "feature",
+    },
   });
 
+  const taskType = watch("task_type");
+  const repositoryId = watch("repository_id");
+
   const onSubmit = handleSubmit(async (values) => {
-    await createTask.mutateAsync(values);
+    const repo = repos.data?.find((r) => r.id === values.repository_id);
+    await createTask.mutateAsync({
+      title: values.title,
+      description: values.description,
+      repository_id: values.repository_id || null,
+      base_branch: repo?.default_branch ?? "main",
+      task_type: values.task_type,
+    });
     reset();
   });
 
   return (
-    <Grid>
+    <div className="space-y-8">
       <div>
-        <h2>New task</h2>
-        <Card as="form" onSubmit={onSubmit}>
-          <Field>
-            <Label htmlFor="title">Title</Label>
-            <Input id="title" placeholder="Add logout button to navbar" {...register("title")} />
-            {errors.title && <ErrorText>{errors.title.message}</ErrorText>}
-          </Field>
-          <Field>
-            <Label htmlFor="description">Description</Label>
-            <Textarea
-              id="description"
-              placeholder="What should change and why"
-              {...register("description")}
-            />
-          </Field>
-          <Field>
-            <Label htmlFor="repo_url">Repository URL</Label>
-            <Input id="repo_url" placeholder="https://gitlab.com/org/repo" {...register("repo_url")} />
-            {errors.repo_url && <ErrorText>{errors.repo_url.message}</ErrorText>}
-          </Field>
-          <Field>
-            <Label htmlFor="task_type">Type</Label>
-            <Input as="select" id="task_type" {...register("task_type")}>
-              {TASK_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </Input>
-          </Field>
-          <Button type="submit" $variant="primary" disabled={createTask.isPending}>
-            {createTask.isPending ? "Creating..." : "Create task"}
-          </Button>
-          {createTask.isError && (
-            <ErrorText style={{ display: "block", marginTop: 8 }}>
-              {(createTask.error as Error).message}
-            </ErrorText>
-          )}
-        </Card>
+        <h1 className="text-2xl font-semibold tracking-tight">Tasks</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Create an audit or develop task against a connected repository, then run the workflow.
+        </p>
       </div>
 
-      <div>
-        <h2>Tasks</h2>
-        {tasks.isLoading && <Muted>Loading...</Muted>}
-        {tasks.isError && <ErrorText>Failed to load tasks. Is the API running?</ErrorText>}
-        {tasks.data?.length === 0 && <Muted>No tasks yet. Create one to run the workflow.</Muted>}
-        {tasks.data?.map((task) => (
-          <TaskRow key={task.id} to={`/tasks/${task.id}`}>
-            <span>{task.title}</span>
-            <StatusBadge value={task.task_type} />
-          </TaskRow>
-        ))}
+      <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
+        <Card>
+          <CardHeader>
+            <CardTitle>New task</CardTitle>
+            <CardDescription>
+              Pick a repository and a mode. Audit is read-only; develop writes into a worktree.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form className="space-y-4" onSubmit={onSubmit}>
+              <div className="space-y-2">
+                <Label htmlFor="title">Title</Label>
+                <Input id="title" placeholder="Add rate limiting to login" {...register("title")} />
+                {errors.title && <p className="text-xs text-destructive">{errors.title.message}</p>}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="description">Description</Label>
+                <Textarea
+                  id="description"
+                  placeholder="What should change and why"
+                  {...register("description")}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Repository</Label>
+                <Select
+                  value={repositoryId ?? "none"}
+                  onValueChange={(v) => setValue("repository_id", v === "none" ? null : v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select repository" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No repository (synthetic)</SelectItem>
+                    {repos.data?.map((r) => (
+                      <SelectItem key={r.id} value={r.id}>
+                        {r.name} ({r.status})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Type</Label>
+                <Select value={taskType} onValueChange={(v) => setValue("task_type", v)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TASK_TYPES.map((t) => (
+                      <SelectItem key={t.value} value={t.value}>
+                        {t.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button type="submit" disabled={createTask.isPending}>
+                {createTask.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                Create task
+              </Button>
+              {createTask.isError && (
+                <p className="text-xs text-destructive">{(createTask.error as Error).message}</p>
+              )}
+            </form>
+          </CardContent>
+        </Card>
+
+        <div className="space-y-3">
+          {tasks.isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
+          {tasks.data?.length === 0 && (
+            <Card>
+              <CardContent className="py-10 text-center text-sm text-muted-foreground">
+                No tasks yet.
+              </CardContent>
+            </Card>
+          )}
+          {tasks.data?.map((task) => (
+            <Link key={task.id} to={`/tasks/${task.id}`} className="block">
+              <Card className="transition-colors hover:bg-black/[0.015]">
+                <CardContent className="flex items-center justify-between gap-3 py-4">
+                  <div className="min-w-0">
+                    <div className="truncate font-medium">{task.title}</div>
+                    <div className="truncate text-xs text-muted-foreground">
+                      {task.repo_url || "no repository"}
+                    </div>
+                  </div>
+                  <StatusBadge value={task.task_type} />
+                </CardContent>
+              </Card>
+            </Link>
+          ))}
+        </div>
       </div>
-    </Grid>
+    </div>
   );
 }
