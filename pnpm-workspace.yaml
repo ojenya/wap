@@ -1,3 +1,12 @@
 packages:
   - "apps/*"
   - "packages/*"
+
+# pnpm blocks dependency build scripts by default; allow esbuild (Vite needs it).
+allowBuilds:
+  esbuild: true
+
+# Pin a transitive data package to a release that satisfies the registry
+# minimum-release-age supply-chain policy (2.11.3 was too fresh at scaffold time).
+overrides:
+  baseline-browser-mapping: 2.11.1
