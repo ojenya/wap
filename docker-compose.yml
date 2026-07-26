@@ -29,6 +29,11 @@ services:
       OPENCODE_API_KEY: "${OPENCODE_API_KEY:-}"
       OPENCODE_PLAN: "${OPENCODE_PLAN:-zen}"
       OPENCODE_MODEL: "${OPENCODE_MODEL:-opencode/qwen3-coder}"
+      APP_FIRECRACKER_MODE: "${APP_FIRECRACKER_MODE:-auto}"
+      APP_FIRECRACKER_BIN: "${APP_FIRECRACKER_BIN:-firecracker}"
+      APP_FIRECRACKER_KERNEL: "${APP_FIRECRACKER_KERNEL:-}"
+      APP_FIRECRACKER_ROOTFS: "${APP_FIRECRACKER_ROOTFS:-}"
+      APP_PLAYWRIGHT_ENABLED: "${APP_PLAYWRIGHT_ENABLED:-true}"
     volumes:
       # Mount source for uvicorn --reload without clobbering installed deps.
       - ./apps/api/app:/app/app
