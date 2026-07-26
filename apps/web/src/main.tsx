@@ -4,7 +4,10 @@ import ReactDOM from "react-dom/client";
 import { RouterProvider, createBrowserRouter } from "react-router-dom";
 
 import { App } from "./App";
+import { DashboardPage } from "./pages/DashboardPage";
+import { LearningPage } from "./pages/LearningPage";
 import { RepositoriesPage } from "./pages/RepositoriesPage";
+import { SettingsPage } from "./pages/SettingsPage";
 import { TaskDetailPage } from "./pages/TaskDetailPage";
 import { TasksPage } from "./pages/TasksPage";
 import "./index.css";
@@ -18,9 +21,12 @@ const router = createBrowserRouter([
     path: "/",
     element: <App />,
     children: [
-      { index: true, element: <TasksPage /> },
-      { path: "repositories", element: <RepositoriesPage /> },
+      { index: true, element: <DashboardPage /> },
+      { path: "tasks", element: <TasksPage /> },
       { path: "tasks/:taskId", element: <TaskDetailPage /> },
+      { path: "repositories", element: <RepositoriesPage /> },
+      { path: "learning", element: <LearningPage /> },
+      { path: "settings", element: <SettingsPage /> },
     ],
   },
 ]);

@@ -5,6 +5,7 @@ const tone: Record<string, "success" | "warning" | "danger" | "secondary" | "out
   ready: "success",
   running: "outline",
   pending: "secondary",
+  awaiting_approval: "warning",
   failed: "danger",
   error: "danger",
   skipped: "secondary",
@@ -17,5 +18,5 @@ const tone: Record<string, "success" | "warning" | "danger" | "secondary" | "out
 };
 
 export function StatusBadge({ value }: { value: string }) {
-  return <Badge variant={tone[value] ?? "secondary"}>{value}</Badge>;
+  return <Badge variant={tone[value] ?? "secondary"}>{value.replaceAll("_", " ")}</Badge>;
 }

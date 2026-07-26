@@ -62,6 +62,7 @@ def test_workflow_uses_real_worktree(db_session, tmp_path, monkeypatch):
         repo_url=str(origin),
         base_branch="main",
         task_type="feature",
+        require_approval=False,
     )
     db_session.add(task)
     db_session.commit()
@@ -103,6 +104,7 @@ def test_audit_skips_develop_mutations(db_session, tmp_path, monkeypatch):
         repository_id=repo.id,
         base_branch="main",
         task_type="audit",
+        require_approval=False,
     )
     db_session.add(task)
     db_session.commit()

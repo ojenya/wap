@@ -1,11 +1,22 @@
-import { GitBranch, LayoutDashboard, Sparkles } from "lucide-react";
+import {
+  Activity,
+  BookOpen,
+  GitBranch,
+  LayoutDashboard,
+  ListTodo,
+  Settings2,
+  Sparkles,
+} from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
 
 import { cn } from "@/lib/utils";
 
 const nav = [
-  { to: "/", label: "Tasks", icon: LayoutDashboard, end: true },
+  { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
+  { to: "/tasks", label: "Tasks", icon: ListTodo },
   { to: "/repositories", label: "Repositories", icon: GitBranch },
+  { to: "/learning", label: "Learning", icon: BookOpen },
+  { to: "/settings", label: "Workflow", icon: Settings2 },
 ];
 
 export function App() {
@@ -39,9 +50,9 @@ export function App() {
             </NavLink>
           ))}
         </nav>
-        <div className="rounded-xl bg-white p-3 text-xs text-muted-foreground shadow-sm">
-          Connect a GitLab / Git repo, then run <span className="font-medium text-foreground">audit</span> or{" "}
-          <span className="font-medium text-foreground">develop</span> in an isolated worktree.
+        <div className="flex items-start gap-2 rounded-xl bg-white p-3 text-xs text-muted-foreground shadow-sm">
+          <Activity className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          Async runs · worktrees · GitLab MR · RAG · approval gates
         </div>
       </aside>
       <main className="flex-1 overflow-auto">

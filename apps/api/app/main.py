@@ -7,9 +7,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.auth import bootstrap_admin
 from app.config import get_settings
-from app.db import init_db
-from app.routers import repos, tasks
+from app.db import SessionLocal, init_db
+from app.rag import _ensure_fts
+from app.routers import learning, metrics, repos, tasks, workflow_config
+from app.workflow_settings import get_or_create_config
 
 settings = get_settings()
 
@@ -17,10 +20,17 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    db = SessionLocal()
+    try:
+        bootstrap_admin(db)
+        get_or_create_config(db)
+        _ensure_fts(db)
+    finally:
+        db.close()
     yield
 
 
-app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="0.2.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -32,6 +42,9 @@ app.add_middleware(
 
 app.include_router(tasks.router)
 app.include_router(repos.router)
+app.include_router(metrics.router)
+app.include_router(workflow_config.router)
+app.include_router(learning.router)
 
 
 @app.get("/health")

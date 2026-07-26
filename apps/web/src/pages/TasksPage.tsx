@@ -24,6 +24,8 @@ const schema = yup.object({
   description: yup.string().default(""),
   repository_id: yup.string().nullable().default(null),
   task_type: yup.string().default("feature"),
+  path_filters: yup.string().default(""),
+  require_approval: yup.boolean().default(true),
 });
 
 type FormValues = yup.InferType<typeof schema>;
@@ -55,20 +57,29 @@ export function TasksPage() {
       description: "",
       repository_id: null,
       task_type: "feature",
+      path_filters: "",
+      require_approval: true,
     },
   });
 
   const taskType = watch("task_type");
   const repositoryId = watch("repository_id");
+  const requireApproval = watch("require_approval");
 
   const onSubmit = handleSubmit(async (values) => {
     const repo = repos.data?.find((r) => r.id === values.repository_id);
+    const filters = values.path_filters
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
     await createTask.mutateAsync({
       title: values.title,
       description: values.description,
       repository_id: values.repository_id || null,
       base_branch: repo?.default_branch ?? "main",
       task_type: values.task_type,
+      path_filters: filters,
+      require_approval: values.require_approval,
     });
     reset();
   });
@@ -78,7 +89,8 @@ export function TasksPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Tasks</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Create an audit or develop task against a connected repository, then run the workflow.
+          Create an audit or develop task against a connected repository. High-risk runs pause for
+          approval.
         </p>
       </div>
 
@@ -86,9 +98,7 @@ export function TasksPage() {
         <Card>
           <CardHeader>
             <CardTitle>New task</CardTitle>
-            <CardDescription>
-              Pick a repository and a mode. Audit is read-only; develop writes into a worktree.
-            </CardDescription>
+            <CardDescription>Optional monorepo path filters: packages/api, apps/web</CardDescription>
           </CardHeader>
           <CardContent>
             <form className="space-y-4" onSubmit={onSubmit}>
@@ -99,11 +109,7 @@ export function TasksPage() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="description">Description</Label>
-                <Textarea
-                  id="description"
-                  placeholder="What should change and why"
-                  {...register("description")}
-                />
+                <Textarea id="description" {...register("description")} />
               </div>
               <div className="space-y-2">
                 <Label>Repository</Label>
@@ -139,26 +145,27 @@ export function TasksPage() {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="space-y-2">
+                <Label htmlFor="path_filters">Path filters (comma-separated)</Label>
+                <Input id="path_filters" placeholder="src/, apps/api" {...register("path_filters")} />
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={requireApproval}
+                  onChange={(e) => setValue("require_approval", e.target.checked)}
+                />
+                Require human approval for high-risk changes
+              </label>
               <Button type="submit" disabled={createTask.isPending}>
                 {createTask.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
                 Create task
               </Button>
-              {createTask.isError && (
-                <p className="text-xs text-destructive">{(createTask.error as Error).message}</p>
-              )}
             </form>
           </CardContent>
         </Card>
 
         <div className="space-y-3">
-          {tasks.isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
-          {tasks.data?.length === 0 && (
-            <Card>
-              <CardContent className="py-10 text-center text-sm text-muted-foreground">
-                No tasks yet.
-              </CardContent>
-            </Card>
-          )}
           {tasks.data?.map((task) => (
             <Link key={task.id} to={`/tasks/${task.id}`} className="block">
               <Card className="transition-colors hover:bg-black/[0.015]">

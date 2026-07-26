@@ -1,32 +1,20 @@
-"""Deterministic stub agents for each lifecycle stage.
-
-These are intentionally rule-based (no external LLM calls) so the full workflow
-runs reproducibly in any environment. Each stage produces structured, cited
-output that mirrors what a real LLM/RAG/opencode-backed agent would return, and
-exposes clear seams (``# EXTENSION POINT``) where a production agent plugs in.
-"""
+"""Lifecycle stage agents (deterministic + real seams for RAG/opencode/Playwright)."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
+from app.db import SessionLocal
 from app.git_workspace import GitWorkspaceManager
+from app.playwright_runner import run_playwright
+from app.rag import retrieve
 from app.workflow.base import Stage
-from app.workflow.contracts import Evidence, StageResult, WorkflowContext
+from app.workflow.contracts import Evidence, StageOutcome, StageResult, WorkflowContext
 from app.workflow.opencode_runner import OpencodeRequest, get_runner
 
-# Keywords that mark a change as security/regulatory sensitive -> higher risk.
 HIGH_RISK_KEYWORDS = (
-    "auth",
-    "password",
-    "secret",
-    "token",
-    "payment",
-    "billing",
-    "migration",
-    "database schema",
-    "production",
-    "encryption",
+    "auth", "password", "secret", "token", "payment", "billing",
+    "migration", "database schema", "production", "encryption",
 )
 
 
@@ -37,7 +25,6 @@ def _keywords(text: str) -> list[str]:
 
 
 def _tokens(*parts: object) -> int:
-    # Deterministic mock cost proportional to the text volume the agent handled.
     return sum(len(str(p)) for p in parts) // 4 + 25
 
 
@@ -47,22 +34,25 @@ class IntakeStage(Stage):
 
     def run(self, context: WorkflowContext) -> StageResult:
         task = context.task
+        params = context.workflow_params
         haystack = f"{task.title} {task.description}".lower()
         risk = "high" if any(k in haystack for k in HIGH_RISK_KEYWORDS) else "medium"
         if len(task.description) < 20 and risk != "high":
             risk = "low"
-        normalized = {
-            "goal": task.title.strip(),
-            "repo_url": task.repo_url,
-            "base_branch": task.base_branch,
-            "task_type": task.task_type,
-            "risk_level": risk,
-            "keywords": _keywords(haystack),
-            "required_checks": ["lint", "typecheck", "unit_tests"]
-            + (["security_scan"] if risk == "high" else []),
-        }
+        checks = list(params.get("required_checks") or ["lint", "typecheck", "unit_tests"])
+        if risk == "high" and "security_scan" not in checks:
+            checks.append("security_scan")
         return StageResult(
-            output=normalized,
+            output={
+                "goal": task.title.strip(),
+                "repo_url": task.repo_url,
+                "base_branch": task.base_branch,
+                "task_type": task.task_type,
+                "risk_level": risk,
+                "keywords": _keywords(haystack),
+                "required_checks": checks,
+                "path_filters": task.path_filters,
+            },
             evidence=[Evidence(source="task", reference=task.id, reason="user request")],
             tokens=_tokens(haystack),
         )
@@ -73,44 +63,87 @@ class RepositoryContextStage(Stage):
     agent_role = "Repository Intelligence (RAG)"
 
     def run(self, context: WorkflowContext) -> StageResult:
-        # Prefer real files from the per-run worktree when a repository is
-        # connected. Full hybrid RAG (embeddings + BM25 + symbol graph) plugs
-        # in here later; for now we do keyword ranking over tracked paths.
         intake = context.get("intake")
         keywords = intake.get("keywords", [])
-        source = "synthetic"
-        if context.worktree_path:
-            files = GitWorkspaceManager().list_source_files(Path(context.worktree_path))
-            if files:
-                scored = sorted(
-                    files,
-                    key=lambda p: sum(1 for k in keywords if k in p.lower()),
-                    reverse=True,
+        query = f"{context.task.title} {context.task.description} {' '.join(keywords)}"
+        retrieved: list[str] = []
+        evidence: list[Evidence] = []
+        strategy = "synthetic"
+        chunks_meta: list[dict] = []
+
+        if context.task.repository_id:
+            db = SessionLocal()
+            try:
+                hits = retrieve(
+                    db,
+                    context.task.repository_id,
+                    query,
+                    limit=8,
+                    path_filters=context.task.path_filters or None,
                 )
-                retrieved = scored[:6] or files[:6]
-                source = "worktree"
-            else:
-                retrieved = [f"src/{kw}.ts" for kw in keywords[:3]] or ["src/index.ts"]
-        else:
+                if hits:
+                    strategy = "fts5-bm25 + path boost"
+                    for h in hits:
+                        retrieved.append(h.path)
+                        chunks_meta.append(
+                            {
+                                "path": h.path,
+                                "symbol": h.symbol,
+                                "start_line": h.start_line,
+                                "end_line": h.end_line,
+                                "score": h.score,
+                            }
+                        )
+                        evidence.append(
+                            Evidence(
+                                source="rag",
+                                reference=f"{h.path}:{h.start_line}-{h.end_line}",
+                                reason=h.symbol or "fts match",
+                            )
+                        )
+            finally:
+                db.close()
+
+        if not retrieved and context.worktree_path:
+            files = GitWorkspaceManager().list_source_files(Path(context.worktree_path))
+            filters = context.task.path_filters or []
+            if filters:
+                files = [
+                    f for f in files
+                    if any(f == p or f.startswith(p.rstrip("/") + "/") for p in filters)
+                ]
+            scored = sorted(
+                files,
+                key=lambda p: sum(1 for k in keywords if k in p.lower()),
+                reverse=True,
+            )
+            retrieved = scored[:6] or files[:6]
+            strategy = "worktree keyword rank"
+            evidence = [Evidence(source="worktree", reference=p) for p in retrieved]
+
+        if not retrieved:
             retrieved = [f"src/{kw}.ts" for kw in keywords[:3]] or ["src/index.ts"]
-            retrieved += [
-                "tests/" + f.split("/")[-1].replace(".ts", ".test.ts") for f in retrieved
-            ]
-        evidence = [
-            Evidence(source=source, reference=path, reason="path/keyword match")
-            for path in retrieved
-        ]
+            evidence = [Evidence(source="synthetic", reference=p) for p in retrieved]
+
+        # Deduplicate preserving order.
+        seen: set[str] = set()
+        uniq = []
+        for p in retrieved:
+            if p not in seen:
+                seen.add(p)
+                uniq.append(p)
+
         return StageResult(
             output={
-                "retrieval_strategy": "worktree keyword rank" if source == "worktree"
-                else "synthetic (no repository attached)",
-                "retrieved_files": retrieved,
+                "retrieval_strategy": strategy,
+                "retrieved_files": uniq,
+                "chunks": chunks_meta,
                 "commit_pinned": bool(context.head_sha),
                 "head_sha": context.head_sha or None,
                 "worktree_path": context.worktree_path or None,
             },
             evidence=evidence,
-            tokens=_tokens(retrieved),
+            tokens=_tokens(uniq, chunks_meta),
         )
 
 
@@ -129,10 +162,12 @@ class AuditStage(Stage):
             findings.append(
                 "Security-sensitive area detected: human-in-the-loop gate required before merge."
             )
+        if context.task.path_filters:
+            findings.append(f"Monorepo scope limited to: {', '.join(context.task.path_filters)}")
         return StageResult(
             output={
                 "findings": findings,
-                "requires_human_gate": risk == "high",
+                "requires_human_gate": risk == "high" and context.task.require_approval,
                 "policy_violations": [],
             },
             evidence=[Evidence(source="policy", reference="audit-policy-v1")],
@@ -177,8 +212,11 @@ class SpecStage(Stage):
             for i, s in enumerate(scenarios)
         ]
         acceptance.append(
-            {"id": f"AC-{len(acceptance) + 1}", "criterion": "All static checks pass",
-             "verification": "static"}
+            {
+                "id": f"AC-{len(acceptance) + 1}",
+                "criterion": "All static checks pass",
+                "verification": "static",
+            }
         )
         return StageResult(
             output={
@@ -196,14 +234,37 @@ class ApprovalGateStage(Stage):
     agent_role = "Policy Gate"
 
     def run(self, context: WorkflowContext) -> StageResult:
-        requires_gate = context.get("audit").get("requires_human_gate", False)
-        # EXTENSION POINT: block here until a human approves high-risk changes.
-        # MVP auto-approves but records the decision for the audit trail.
+        params = context.workflow_params
+        risk = context.get("intake").get("risk_level", "medium")
+        requires = bool(context.get("audit").get("requires_human_gate"))
+        # Already approved earlier in this run (resume path).
+        if context.get("approval_gate").get("approved"):
+            return StageResult(
+                output=context.get("approval_gate"),
+                evidence=[Evidence(source="policy", reference="approval-gate-v1")],
+                tokens=10,
+            )
+        auto_low = params.get("auto_approve_low_risk", True)
+        auto_high = params.get("auto_approve_high_risk", False)
+        if not requires:
+            decision = "not required"
+            approved = True
+            outcome = StageOutcome.completed
+        elif (risk == "high" and auto_high) or (risk != "high" and auto_low):
+            decision = f"auto-approved ({risk})"
+            approved = True
+            outcome = StageOutcome.completed
+        else:
+            decision = "awaiting human approval"
+            approved = False
+            outcome = StageOutcome.awaiting_approval
         return StageResult(
+            outcome=outcome,
             output={
-                "gate_required": requires_gate,
-                "decision": "auto-approved (MVP)" if requires_gate else "not required",
-                "approved": True,
+                "gate_required": requires,
+                "decision": decision,
+                "approved": approved,
+                "risk_level": risk,
             },
             evidence=[Evidence(source="policy", reference="approval-gate-v1")],
             tokens=25,
@@ -215,7 +276,6 @@ class DevelopStage(Stage):
     agent_role = "Implementation Agent (opencode runner)"
 
     def run(self, context: WorkflowContext) -> StageResult:
-        # Audit-oriented tasks skip mutating the worktree.
         if context.task.task_type == "audit":
             return StageResult(
                 output={
@@ -233,19 +293,28 @@ class DevelopStage(Stage):
             )
 
         affected = context.get("analysis").get("affected_files", ["src/index.ts"])
+        filters = context.task.path_filters or []
+        if filters:
+            scoped = [
+                f for f in affected
+                if any(f == p or f.startswith(p.rstrip("/") + "/") for p in filters)
+            ]
+            affected = scoped or [filters[0].rstrip("/") + "/index.ts"]
+
         slug = context.task.title.strip().replace(" ", "_").lower()[:40] or "change"
         workdir = context.worktree_path or None
-
         runner = get_runner()
-        req = OpencodeRequest(
-            task_title=context.task.title,
-            task_description=context.task.description,
-            acceptance_criteria=context.get("spec").get("acceptance_criteria", []),
-            allowed_files=affected,
-            base_branch=context.task.base_branch,
-            workdir=workdir,
+        # Prefer model/plan from workflow config when present.
+        result = runner.run(
+            OpencodeRequest(
+                task_title=context.task.title,
+                task_description=context.task.description,
+                acceptance_criteria=context.get("spec").get("acceptance_criteria", []),
+                allowed_files=affected,
+                base_branch=context.task.base_branch,
+                workdir=workdir,
+            )
         )
-        result = runner.run(req)
 
         if result.mode == "opencode":
             diff = result.diff
@@ -253,8 +322,6 @@ class DevelopStage(Stage):
             commands = result.commands_executed
             develop_mode = "opencode"
         elif workdir:
-            # Real worktree, no opencode key: apply a deterministic stub *inside*
-            # the worktree so the artifact is a genuine git diff.
             target = affected[0]
             stub = (
                 f"// Implements: {context.task.title}\n"
@@ -268,7 +335,10 @@ class DevelopStage(Stage):
             commands = ["git worktree add", "stub patch applied in worktree"]
             develop_mode = "worktree-stub"
         else:
-            diff = self._stub_patch(affected[0], context.task.title, slug)
+            diff = (
+                f"--- a/{affected[0]}\n+++ b/{affected[0]}\n@@\n"
+                f"+// Implements: {context.task.title}\n"
+            )
             changed = affected
             commands = ["synthetic stub (no repository / worktree)"]
             develop_mode = "synthetic-stub"
@@ -294,18 +364,6 @@ class DevelopStage(Stage):
             tokens=_tokens(diff),
         )
 
-    @staticmethod
-    def _stub_patch(target: str, title: str, slug: str) -> str:
-        return (
-            f"--- a/{target}\n+++ b/{target}\n"
-            "@@\n"
-            f"+// Implements: {title}\n"
-            f"+export function {slug}() {{\n"
-            "+  // deterministic MVP stub (no worktree)\n"
-            "+  return true;\n"
-            "+}\n"
-        )
-
 
 class StaticChecksStage(Stage):
     name = "static_checks"
@@ -319,6 +377,7 @@ class StaticChecksStage(Stage):
             "unit_tests": "vitest run",
             "security_scan": "gitleaks detect",
         }
+        # Deterministic pass; a future seam runs real commands in the worktree.
         results = [
             {"check": c, "command": cmd_map.get(c, c), "exit_code": 0, "status": "passed"}
             for c in checks
@@ -335,16 +394,36 @@ class SandboxQAStage(Stage):
     agent_role = "Sandbox QA Agent"
 
     def run(self, context: WorkflowContext) -> StageResult:
-        # EXTENSION POINT: run Playwright in a disposable Docker sandbox and
-        # collect trace/video/screenshots/HAR.
         scenarios = context.get("analysis").get("playwright_scenarios", [])
+        if not context.workflow_params.get("playwright_enabled", True):
+            results = [{"scenario": s, "status": "skipped", "artifacts": []} for s in scenarios]
+            return StageResult(
+                output={"results": results, "all_passed": True, "mode": "disabled"},
+                evidence=[],
+                tokens=10,
+            )
+        pw = run_playwright(scenarios)
         results = [
-            {"scenario": s, "status": "passed", "artifacts": [f"trace-{i}.zip"]}
-            for i, s in enumerate(scenarios)
+            {
+                "scenario": r.scenario,
+                "status": r.status,
+                "artifacts": r.artifacts,
+                "error": r.error,
+            }
+            for r in pw.results
         ]
         return StageResult(
-            output={"results": results, "all_passed": True, "console_errors": []},
-            evidence=[Evidence(source="playwright", reference=r["artifacts"][0]) for r in results],
+            output={
+                "results": results,
+                "all_passed": pw.all_passed,
+                "mode": pw.mode,
+                "console_errors": pw.console_errors,
+                "logs": pw.logs[:2000],
+            },
+            evidence=[
+                Evidence(source="playwright", reference=r.scenario, reason=r.status)
+                for r in pw.results
+            ],
             tokens=_tokens(results),
         )
 
@@ -357,17 +436,23 @@ class ReviewStage(Stage):
         criteria = context.get("spec").get("acceptance_criteria", [])
         static_ok = context.get("static_checks").get("all_passed", False)
         sandbox_ok = context.get("sandbox_qa").get("all_passed", False)
+        develop = context.get("develop")
+        if develop.get("skipped"):
+            static_ok = True
+            sandbox_ok = True
         compliance = [
-            {"id": c["id"], "criterion": c["criterion"],
-             "result": "pass" if (static_ok and sandbox_ok) else "fail"}
+            {
+                "id": c["id"],
+                "criterion": c["criterion"],
+                "result": "pass" if (static_ok and sandbox_ok) else "fail",
+            }
             for c in criteria
         ]
-        approved = static_ok and sandbox_ok
         return StageResult(
             output={
                 "spec_compliance": compliance,
                 "regression_notes": context.get("analysis").get("regression_risk", "low"),
-                "approved": approved,
+                "approved": static_ok and sandbox_ok,
             },
             evidence=[Evidence(source="review", reference="diff-review")],
             tokens=_tokens(compliance),
@@ -384,23 +469,37 @@ class ReportStage(Stage):
         develop = context.get("develop")
         compliance = review.get("spec_compliance", [])
         checks = context.get("static_checks").get("results", [])
-        lines = [
-            f"# Report: {task.title}",
-            "",
-            "## Executive summary",
-            f"- Status: {'APPROVED' if review.get('approved') else 'CHANGES REQUESTED'}",
-            f"- Risk level: {context.get('intake').get('risk_level')}",
-            f"- Branch: {develop.get('branch', 'n/a')}",
-            "",
-            "## Scope",
-            f"- Repo: {task.repo_url or 'n/a'} @ {task.base_branch}",
-            f"- Changed files: {', '.join(develop.get('changed_files', [])) or 'none'}",
-            "",
-            "## Spec compliance",
-        ]
-        lines += [f"- {c['id']}: {c['result']} - {c['criterion']}" for c in compliance]
-        lines += ["", "## Static checks"]
-        lines += [f"- {c['command']} -> exit {c['exit_code']} ({c['status']})" for c in checks]
+        sections = set(context.workflow_params.get("report_sections") or [])
+        lines = [f"# Report: {task.title}", ""]
+        if "executive_summary" in sections or not sections:
+            lines += [
+                "## Executive summary",
+                f"- Status: {'APPROVED' if review.get('approved') else 'CHANGES REQUESTED'}",
+                f"- Risk level: {context.get('intake').get('risk_level')}",
+                f"- Branch: {develop.get('branch', 'n/a')}",
+                "",
+            ]
+        if "scope" in sections or not sections:
+            lines += [
+                "## Scope",
+                f"- Repo: {task.repo_url or 'n/a'} @ {task.base_branch}",
+                f"- Changed files: {', '.join(develop.get('changed_files', [])) or 'none'}",
+                f"- Worktree: {context.worktree_path or 'n/a'}",
+                "",
+            ]
+        if "spec_compliance" in sections or not sections:
+            lines += ["## Spec compliance"]
+            lines += [f"- {c['id']}: {c['result']} - {c['criterion']}" for c in compliance]
+            lines.append("")
+        if "static_checks" in sections or not sections:
+            lines += ["## Static checks"]
+            lines += [
+                f"- {c['command']} -> exit {c['exit_code']} ({c['status']})" for c in checks
+            ]
+            lines.append("")
+        if "cost" in sections or not sections:
+            total = sum(o.get("_tokens", 0) for o in context.outputs.values())
+            lines += ["## Cost and latency", f"- Approx tokens across stages: {total}", ""]
         report_md = "\n".join(lines)
         return StageResult(
             output={"report_markdown": report_md, "approved": review.get("approved", False)},
@@ -414,19 +513,37 @@ class LearningStage(Stage):
     agent_role = "Learning Agent"
 
     def run(self, context: WorkflowContext) -> StageResult:
-        # EXTENSION POINT: persist validated case memory / eval dataset entries,
-        # gated on successful CI + human approval to avoid memory rot.
+        from app.models import CaseMemory
+
         approved = context.get("review").get("approved", False)
         lessons = [
             f"Task type '{context.task.task_type}' completed with "
             f"{len(context.get('develop').get('changed_files', []))} file(s) changed.",
         ]
+        if context.get("repository_context").get("retrieval_strategy"):
+            lessons.append(
+                f"Retrieval strategy: {context.get('repository_context')['retrieval_strategy']}"
+            )
+        stored = "skipped"
+        if approved:
+            db = SessionLocal()
+            try:
+                for lesson in lessons:
+                    db.add(
+                        CaseMemory(
+                            task_type=context.task.task_type,
+                            title=context.task.title,
+                            lesson=lesson,
+                            validated=True,
+                            repository_id=context.task.repository_id,
+                        )
+                    )
+                db.commit()
+                stored = "case_memory"
+            finally:
+                db.close()
         return StageResult(
-            output={
-                "validated": approved,
-                "lessons": lessons,
-                "stored_in": "operational_memory" if approved else "skipped",
-            },
+            output={"validated": approved, "lessons": lessons, "stored_in": stored},
             evidence=[Evidence(source="learning", reference="case-memory")],
             tokens=_tokens(lessons),
         )

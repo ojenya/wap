@@ -1,8 +1,8 @@
 import type { StageExecution, WorkflowRun } from "@wap/shared";
-import { ArrowLeft, Loader2, Play } from "lucide-react";
+import { ArrowLeft, Check, Loader2, Play } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 
-import { useStartRun, useTask } from "@/api/hooks";
+import { useApproveRun, useStartRun, useTask } from "@/api/hooks";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,7 +23,6 @@ function StageItem({ stage }: { stage: StageExecution }) {
               <span>{stage.agent_role}</span>
               <span>{stage.tokens} tokens</span>
               <span>{stage.duration_ms.toFixed(1)} ms</span>
-              <span>{stage.evidence.length} evidence</span>
             </div>
           </div>
           <StatusBadge value={stage.status} />
@@ -39,8 +38,17 @@ function StageItem({ stage }: { stage: StageExecution }) {
   );
 }
 
-function RunView({ run }: { run: WorkflowRun }) {
+function RunView({
+  run,
+  onApprove,
+  approving,
+}: {
+  run: WorkflowRun;
+  onApprove: () => void;
+  approving: boolean;
+}) {
   const report = run.artifacts.find((a) => a.kind === "report");
+  const active = run.status === "pending" || run.status === "running";
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -48,11 +56,35 @@ function RunView({ run }: { run: WorkflowRun }) {
         <StatusBadge value={run.status} />
         <span className="text-sm text-muted-foreground">{run.total_tokens} tokens</span>
         {run.risk_level && <StatusBadge value={run.risk_level} />}
+        {typeof run.develop_iterations === "number" && run.develop_iterations > 0 && (
+          <span className="text-xs text-muted-foreground">
+            develop retries: {run.develop_iterations}
+          </span>
+        )}
       </div>
+      {run.status === "awaiting_approval" && (
+        <Card className="border-amber-200 bg-amber-50">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+            <p className="text-sm">High-risk change paused at the human approval gate.</p>
+            <Button onClick={onApprove} disabled={approving}>
+              {approving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+              Approve & continue
+            </Button>
+          </CardContent>
+        </Card>
+      )}
       {run.worktree_path && (
         <p className="rounded-xl bg-[#f7f7f8] px-3 py-2 font-mono text-xs text-muted-foreground">
           worktree: {run.worktree_path}
         </p>
+      )}
+      {run.mr_url && (
+        <a className="text-sm underline" href={run.mr_url} target="_blank" rel="noreferrer">
+          Merge request: {run.mr_url}
+        </a>
+      )}
+      {active && (
+        <p className="text-xs text-muted-foreground">Run in progress… polling for updates.</p>
       )}
       <div className="space-y-3">
         {run.stages.map((s) => (
@@ -77,8 +109,9 @@ function RunView({ run }: { run: WorkflowRun }) {
 
 export function TaskDetailPage() {
   const { taskId = "" } = useParams();
-  const task = useTask(taskId);
+  const task = useTask(taskId, 1500);
   const startRun = useStartRun(taskId);
+  const approve = useApproveRun(taskId);
 
   if (task.isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
   if (task.isError || !task.data) {
@@ -90,7 +123,7 @@ export function TaskDetailPage() {
   return (
     <div className="space-y-6">
       <Link
-        to="/"
+        to="/tasks"
         className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft className="h-4 w-4" /> Back to tasks
@@ -104,6 +137,7 @@ export function TaskDetailPage() {
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <StatusBadge value={task.data.task_type} />
+            {task.data.require_approval && <StatusBadge value="awaiting_approval" />}
             {task.data.repo_url && (
               <span className="text-xs text-muted-foreground">{task.data.repo_url}</span>
             )}
@@ -119,16 +153,16 @@ export function TaskDetailPage() {
         </Button>
       </div>
 
-      {startRun.isError && (
-        <p className="text-sm text-destructive">{(startRun.error as Error).message}</p>
-      )}
-
       {latestRun ? (
-        <RunView run={latestRun} />
+        <RunView
+          run={latestRun}
+          approving={approve.isPending}
+          onApprove={() => approve.mutate(latestRun.id)}
+        />
       ) : (
         <Card>
           <CardContent className="py-10 text-center text-sm text-muted-foreground">
-            No runs yet. Click “Run workflow” to execute the multi-agent lifecycle in a worktree.
+            No runs yet.
           </CardContent>
         </Card>
       )}

@@ -27,13 +27,18 @@ def test_run_completes_all_stages(db_session):
     assert run.total_tokens > 0
 
 
-def test_high_risk_task_flags_human_gate(db_session):
-    task = Task(title="Rotate the auth secret token", description="Update password encryption")
+def test_high_risk_task_pauses_at_human_gate(db_session):
+    task = Task(
+        title="Rotate the auth secret token",
+        description="Update password encryption",
+        require_approval=True,
+    )
     db_session.add(task)
     db_session.commit()
 
     run = run_workflow(db_session, task)
 
+    assert run.status == RunStatus.awaiting_approval
     intake = next(s for s in run.stages if s.name == "intake")
     audit = next(s for s in run.stages if s.name == "audit")
     assert intake.output_payload["risk_level"] == "high"

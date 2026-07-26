@@ -24,7 +24,7 @@ def test_create_and_run_task_end_to_end(client):
     assert create.status_code == 201
     task_id = create.json()["id"]
 
-    run = client.post(f"/api/tasks/{task_id}/runs")
+    run = client.post(f"/api/tasks/{task_id}/runs?sync=true")
     assert run.status_code == 201
     body = run.json()
     assert body["status"] == "completed"
@@ -36,6 +36,23 @@ def test_create_and_run_task_end_to_end(client):
     assert len(detail.json()["runs"]) == 1
 
 
+def test_high_risk_awaits_approval(client):
+    create = client.post(
+        "/api/tasks",
+        json={
+            "title": "Rotate the auth secret token",
+            "description": "Update password encryption keys",
+            "require_approval": True,
+        },
+    )
+    task_id = create.json()["id"]
+    run = client.post(f"/api/tasks/{task_id}/runs?sync=true").json()
+    assert run["status"] == "awaiting_approval"
+    approved = client.post(f"/api/runs/{run['id']}/approve?sync=true", json={"note": "lgtm"})
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "completed"
+
+
 def test_task_validation_rejects_short_title(client):
     resp = client.post("/api/tasks", json={"title": "hi"})
     assert resp.status_code == 422
@@ -43,3 +60,18 @@ def test_task_validation_rejects_short_title(client):
 
 def test_missing_task_returns_404(client):
     assert client.get("/api/tasks/does-not-exist").status_code == 404
+
+
+def test_metrics_and_workflow_config(client):
+    assert client.get("/api/metrics").status_code == 200
+    cfg = client.get("/api/workflow-config")
+    assert cfg.status_code == 200
+    assert "enabled_stages" in cfg.json()["params"]
+
+
+def test_eval_harness(client):
+    resp = client.post("/api/learning/evals/run")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] >= 1
+    assert body["passed"] + body["failed"] == body["total"]

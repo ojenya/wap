@@ -17,9 +17,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote, urlparse, urlunparse
 
+from sqlalchemy.orm import Session
+
 from app.config import Settings, get_settings
 from app.models import Repository
-from app.security import decrypt_secret
+from app.security import decrypt_secret, reveal_repo_token
 
 
 class GitWorkspaceError(RuntimeError):
@@ -92,10 +94,18 @@ class GitWorkspaceManager:
     def mirror_path(self, repo_id: str) -> Path:
         return self.mirrors / repo_id
 
-    def ensure_mirror(self, repo: Repository) -> Path:
+    def ensure_mirror(self, repo: Repository, db: Session | None = None) -> Path:
         """Clone (or fetch) the durable mirror for ``repo``. Returns the path."""
         path = self.mirror_path(repo.id)
-        token = decrypt_secret(repo.token_encrypted) if repo.token_encrypted else ""
+        if repo.token_encrypted and db is not None:
+            token = reveal_repo_token(
+                db,
+                repository_id=repo.id,
+                token_encrypted=repo.token_encrypted,
+                purpose="git_mirror_sync",
+            )
+        else:
+            token = decrypt_secret(repo.token_encrypted) if repo.token_encrypted else ""
         remote = authenticated_url(repo.url, token)
         if not (path / ".git").exists() and not (path / "HEAD").exists():
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -111,10 +121,14 @@ class GitWorkspaceManager:
         return path
 
     def create_worktree(
-        self, repo: Repository, run_id: str, branch: str | None = None
+        self,
+        repo: Repository,
+        run_id: str,
+        branch: str | None = None,
+        db: Session | None = None,
     ) -> WorktreeInfo:
         """Create an isolated worktree for a workflow run."""
-        mirror = self.ensure_mirror(repo)
+        mirror = self.ensure_mirror(repo, db=db)
         branch = branch or repo.default_branch
         target = self.worktrees / run_id
         if target.exists():

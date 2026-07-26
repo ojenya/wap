@@ -5,12 +5,14 @@ tested code change through an explicit, traceable workflow: **intake → reposit
 context (RAG) → audit → analysis → spec → approval gate → develop (opencode) →
 static checks → sandbox QA → review → report → learning**.
 
-This repository implements the **MVP foundation** (phases 1–2 of the plan):
+This repository implements a working platform covering the plan end-to-end:
 
-- a **deterministic workflow orchestrator** that runs the full lifecycle as a
-  versioned state graph and persists a complete trace of every stage, and
-- a **web UI** to create tasks, run the workflow, and inspect the stage timeline
-  and final report.
+- deterministic (and now **async**) workflow orchestrator with approval gates,
+  develop retry loops, real git worktrees, RAG v1 (FTS5), Playwright sandbox,
+  GitLab project browser / MR publishing, learning/evals, workflow safe-params,
+  RBAC + rate limits;
+- OpenAI-like **shadcn/ui** web app (Dashboard, Tasks, Repositories, Learning,
+  Workflow settings).
 
 Advanced phases (real LLM gateway, pgvector RAG, isolated `opencode` runner,
 Playwright sandbox, GitLab integration, learning loop) are wired as clearly

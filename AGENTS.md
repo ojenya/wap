@@ -55,3 +55,12 @@ and in the `scripts` of the root `package.json`. Don't duplicate them here.
 - Connected repos: `POST /api/repositories` (also the Repositories page). For a
   local path when the API runs in Docker, use the container path under the
   mounted volume (e.g. `/app/data/demo-origin`), not the host `/workspace/...`.
+- Runs are **async by default** (`POST /api/tasks/{id}/runs`); use `?sync=true`
+  in tests. High-risk tasks pause at `awaiting_approval` until
+  `POST /api/runs/{id}/approve`. UI polls task detail every 1.5s.
+- Auth: `APP_AUTH_REQUIRED=false` (default) is open-dev mode with rate limits.
+  Set `true` + `X-API-Key` (`APP_BOOTSTRAP_ADMIN_KEY`) for RBAC.
+- Safe workflow knobs live in `/api/workflow-config` (and Workflow page) — only
+  allowlisted keys, never arbitrary graph edits.
+- Learning: `/api/learning/cases` + `POST /api/learning/evals/run`. Metrics:
+  `/api/metrics`.
