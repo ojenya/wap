@@ -458,3 +458,40 @@ class VmInstance(Base):
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class OAuthProvider(enum.StrEnum):
+    gitlab = "gitlab"
+    github = "github"
+
+
+class OAuthConnection(Base):
+    """User-linked SCM OAuth account (tokens encrypted; never returned to UI)."""
+
+    __tablename__ = "oauth_connections"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    provider: Mapped[OAuthProvider] = mapped_column(Enum(OAuthProvider))
+    account_id: Mapped[str] = mapped_column(String(200), default="")
+    account_login: Mapped[str] = mapped_column(String(200), default="")
+    account_name: Mapped[str] = mapped_column(String(200), default="")
+    access_token_encrypted: Mapped[str] = mapped_column(Text, default="")
+    refresh_token_encrypted: Mapped[str] = mapped_column(Text, default="")
+    scopes: Mapped[str] = mapped_column(String(500), default="")
+    token_type: Mapped[str] = mapped_column(String(50), default="bearer")
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class OAuthState(Base):
+    """Short-lived CSRF state for OAuth authorize redirects."""
+
+    __tablename__ = "oauth_states"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    provider: Mapped[OAuthProvider] = mapped_column(Enum(OAuthProvider))
+    state: Mapped[str] = mapped_column(String(64), unique=True)
+    redirect_to: Mapped[str] = mapped_column(String(500), default="/repositories")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    consumed: Mapped[bool] = mapped_column(Boolean, default=False)

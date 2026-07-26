@@ -101,14 +101,15 @@ def gitlab_oauth_url(_: Operator) -> dict[str, str | None]:
 
 @router.post("/gitlab/oauth/callback")
 def gitlab_oauth_callback(payload: dict, _: Operator) -> dict[str, str]:
+    """Legacy callback — prefer /api/oauth/gitlab/callback (stores connection)."""
     code = payload.get("code")
     if not code:
         raise HTTPException(status_code=422, detail="code is required")
     try:
-        token = oauth_exchange_code(code)
+        token_payload = oauth_exchange_code(code)
     except GitLabError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"access_token": token}
+    return {"access_token": str(token_payload["access_token"])}
 
 
 @router.get("/gitlab/projects")

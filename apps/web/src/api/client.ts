@@ -1,11 +1,14 @@
 import type {
   Automation,
+  Artifact,
   CaseMemory,
   CreateRepositoryInput,
   CreateTaskInput,
   Environment,
   GitLabProject,
   Metrics,
+  OAuthConnection,
+  RemoteRepo,
   Repository,
   RunComment,
   RunEvent,
@@ -15,7 +18,6 @@ import type {
   VmInstance,
   WorkflowConfig,
   WorkflowRun,
-  Artifact,
 } from "@wap/shared";
 
 const BASE = "/api";
@@ -123,4 +125,34 @@ export const api = {
     }),
   listRunArtifacts: (runId: string) => request<Artifact[]>(`/runs/${runId}/artifacts`),
   artifactContentUrl: (artifactId: string) => `${BASE}/artifacts/${artifactId}/content`,
+  oauthProviders: () =>
+    request<Record<string, { configured: boolean; redirect_uri: string }>>("/oauth/providers"),
+  oauthStart: (provider: string) =>
+    request<{ url: string; state: string; provider: string }>(`/oauth/${provider}/start`),
+  oauthCallback: (provider: string, body: { code: string; state: string }) =>
+    request<OAuthConnection>(`/oauth/${provider}/callback`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  listOAuthConnections: () => request<OAuthConnection[]>("/oauth/connections"),
+  deleteOAuthConnection: (id: string) =>
+    request<void>(`/oauth/connections/${id}`, { method: "DELETE" }),
+  listOAuthRepos: (connectionId: string, search = "") =>
+    request<RemoteRepo[]>(
+      `/oauth/connections/${connectionId}/repos?search=${encodeURIComponent(search)}`,
+    ),
+  connectOAuthRepo: (
+    connectionId: string,
+    body: {
+      external_id: string;
+      name: string;
+      clone_url: string;
+      default_branch?: string;
+      path_filters?: string[];
+    },
+  ) =>
+    request<Repository>(`/oauth/connections/${connectionId}/repositories`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 };

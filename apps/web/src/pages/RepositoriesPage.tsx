@@ -1,8 +1,9 @@
 import { yupResolver } from "@hookform/resolvers/yup";
-import type { GitLabProject } from "@wap/shared";
-import { Loader2, RefreshCw, Trash2 } from "lucide-react";
-import { useState } from "react";
+import type { OAuthConnection, RemoteRepo } from "@wap/shared";
+import { Github, Loader2, RefreshCw, Trash2, Unplug } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
+import { useSearchParams } from "react-router-dom";
 import * as yup from "yup";
 
 import { api } from "@/api/client";
@@ -34,18 +35,25 @@ export function RepositoriesPage() {
   const createRepo = useCreateRepository();
   const syncRepo = useSyncRepository();
   const deleteRepo = useDeleteRepository();
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const [gitlabToken, setGitlabToken] = useState("");
-  const [gitlabSearch, setGitlabSearch] = useState("");
-  const [projects, setProjects] = useState<GitLabProject[]>([]);
-  const [loadingProjects, setLoadingProjects] = useState(false);
-  const [oauthUrl, setOauthUrl] = useState<string | null>(null);
+  const [providers, setProviders] = useState<Record<string, { configured: boolean }> | null>(
+    null,
+  );
+  const [connections, setConnections] = useState<OAuthConnection[]>([]);
+  const [activeConnectionId, setActiveConnectionId] = useState<string | null>(null);
+  const [remoteRepos, setRemoteRepos] = useState<RemoteRepo[]>([]);
+  const [repoSearch, setRepoSearch] = useState("");
+  const [loadingRepos, setLoadingRepos] = useState(false);
+  const [oauthBusy, setOauthBusy] = useState<string | null>(null);
+  const [oauthError, setOauthError] = useState<string | null>(null);
+  const [oauthMsg, setOauthMsg] = useState<string | null>(null);
+  const [showManual, setShowManual] = useState(false);
 
   const {
     register,
     handleSubmit,
     reset,
-    setValue,
     formState: { errors },
   } = useForm<FormValues>({
     resolver: yupResolver(schema),
@@ -58,6 +66,81 @@ export function RepositoriesPage() {
       gitlab_project_id: "",
     },
   });
+
+  const refreshConnections = useCallback(async () => {
+    const list = await api.listOAuthConnections();
+    setConnections(list);
+    if (!activeConnectionId && list[0]) {
+      setActiveConnectionId(list[0].id);
+    }
+  }, [activeConnectionId]);
+
+  useEffect(() => {
+    api.oauthProviders().then(setProviders).catch(() => setProviders(null));
+    refreshConnections().catch(() => undefined);
+  }, [refreshConnections]);
+
+  // Handle ?oauth=gitlab|github&code=...&state=... from provider redirect.
+  useEffect(() => {
+    const provider = searchParams.get("oauth");
+    const code = searchParams.get("code");
+    const state = searchParams.get("state");
+    const error = searchParams.get("error");
+    const connected = searchParams.get("connected");
+    if (!provider) return;
+
+    if (error) {
+      setOauthError(error);
+      setSearchParams({}, { replace: true });
+      return;
+    }
+    if (connected === "1") {
+      setOauthMsg(`${provider} connected`);
+      refreshConnections().catch(() => undefined);
+      setSearchParams({}, { replace: true });
+      return;
+    }
+    if (code && state) {
+      setOauthBusy(provider);
+      api
+        .oauthCallback(provider, { code, state })
+        .then(async (conn) => {
+          setOauthMsg(`Connected as ${conn.account_login}`);
+          await refreshConnections();
+          setActiveConnectionId(conn.id);
+        })
+        .catch((e: Error) => setOauthError(e.message))
+        .finally(() => {
+          setOauthBusy(null);
+          setSearchParams({}, { replace: true });
+        });
+    }
+  }, [searchParams, setSearchParams, refreshConnections]);
+
+  useEffect(() => {
+    if (!activeConnectionId) {
+      setRemoteRepos([]);
+      return;
+    }
+    setLoadingRepos(true);
+    api
+      .listOAuthRepos(activeConnectionId, repoSearch)
+      .then(setRemoteRepos)
+      .catch((e: Error) => setOauthError(e.message))
+      .finally(() => setLoadingRepos(false));
+  }, [activeConnectionId, repoSearch]);
+
+  const startOAuth = async (provider: "gitlab" | "github") => {
+    setOauthError(null);
+    setOauthBusy(provider);
+    try {
+      const { url } = await api.oauthStart(provider);
+      window.location.href = url;
+    } catch (e) {
+      setOauthError(e instanceof Error ? e.message : "OAuth start failed");
+      setOauthBusy(null);
+    }
+  };
 
   const onSubmit = handleSubmit(async (values) => {
     const filters = values.path_filters
@@ -77,130 +160,201 @@ export function RepositoriesPage() {
     reset();
   });
 
+  const active = connections.find((c) => c.id === activeConnectionId) ?? null;
+
   return (
     <div className="space-y-8">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Repositories</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Connect GitLab / GitHub / git. Tokens are encrypted and only decrypted for clone/push with
-          an audit log.
+          Connect GitLab / GitHub via OAuth — no PAT pasting. Tokens stay encrypted server-side.
         </p>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Browse GitLab projects</CardTitle>
+          <CardTitle>Connect account</CardTitle>
           <CardDescription>
-            Paste a PAT (or complete OAuth if configured), pick a project, and we prefill the form.
+            Sign in once; then pick repositories from the list. Configure OAuth apps and set
+            client id/secret in the API env.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-4">
           <div className="flex flex-wrap gap-2">
-            <Input
-              className="max-w-sm"
-              type="password"
-              placeholder="glpat-… / OAuth access token"
-              value={gitlabToken}
-              onChange={(e) => setGitlabToken(e.target.value)}
-            />
-            <Input
-              className="max-w-[180px]"
-              placeholder="Search"
-              value={gitlabSearch}
-              onChange={(e) => setGitlabSearch(e.target.value)}
-            />
+            <Button
+              onClick={() => startOAuth("gitlab")}
+              disabled={oauthBusy !== null || providers?.gitlab?.configured === false}
+            >
+              {oauthBusy === "gitlab" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <span className="font-semibold">GL</span>
+              )}
+              Connect GitLab
+            </Button>
             <Button
               variant="outline"
-              disabled={!gitlabToken || loadingProjects}
-              onClick={async () => {
-                setLoadingProjects(true);
-                try {
-                  setProjects(await api.gitlabProjects(gitlabToken, gitlabSearch));
-                } finally {
-                  setLoadingProjects(false);
-                }
-              }}
+              onClick={() => startOAuth("github")}
+              disabled={oauthBusy !== null || providers?.github?.configured === false}
             >
-              {loadingProjects ? <Loader2 className="h-4 w-4 animate-spin" /> : "List projects"}
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={async () => {
-                const res = await api.gitlabOAuthUrl();
-                setOauthUrl(res.url);
-              }}
-            >
-              Get OAuth URL
+              {oauthBusy === "github" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Github className="h-4 w-4" />
+              )}
+              Connect GitHub
             </Button>
           </div>
-          {oauthUrl && (
-            <a className="text-sm underline" href={oauthUrl} target="_blank" rel="noreferrer">
-              Open GitLab OAuth
-            </a>
+          {providers && (
+            <p className="text-xs text-muted-foreground">
+              GitLab OAuth: {providers.gitlab?.configured ? "configured" : "missing env"} · GitHub
+              OAuth: {providers.github?.configured ? "configured" : "missing env"}
+            </p>
           )}
-          <div className="max-h-48 space-y-2 overflow-auto">
-            {projects.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                className="flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left text-sm hover:bg-black/[0.02]"
-                onClick={() => {
-                  setValue("name", p.name);
-                  setValue("url", p.http_url_to_repo);
-                  setValue("default_branch", p.default_branch);
-                  setValue("gitlab_project_id", String(p.id));
-                  setValue("token", gitlabToken);
-                }}
-              >
-                <span>{p.path_with_namespace}</span>
-                <span className="text-xs text-muted-foreground">#{p.id}</span>
-              </button>
-            ))}
-          </div>
+          {oauthError && <p className="text-xs text-destructive">{oauthError}</p>}
+          {oauthMsg && <p className="text-xs text-emerald-700">{oauthMsg}</p>}
+
+          {connections.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {connections.map((c) => (
+                <div key={c.id} className="flex items-center gap-1">
+                  <Button
+                    size="sm"
+                    variant={c.id === activeConnectionId ? "default" : "outline"}
+                    onClick={() => setActiveConnectionId(c.id)}
+                  >
+                    {c.provider}: @{c.account_login}
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    title="Disconnect"
+                    onClick={async () => {
+                      await api.deleteOAuthConnection(c.id);
+                      await refreshConnections();
+                      if (activeConnectionId === c.id) setActiveConnectionId(null);
+                    }}
+                  >
+                    <Unplug className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
+
+      {active && (
+        <Card>
+          <CardHeader>
+            <CardTitle>
+              Repositories for @{active.account_login}
+            </CardTitle>
+            <CardDescription>Click a repo to connect it to the Change Factory.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Input
+              className="max-w-sm"
+              placeholder="Filter…"
+              value={repoSearch}
+              onChange={(e) => setRepoSearch(e.target.value)}
+            />
+            {loadingRepos && (
+              <p className="text-sm text-muted-foreground">
+                <Loader2 className="mr-2 inline h-4 w-4 animate-spin" /> Loading…
+              </p>
+            )}
+            <div className="max-h-72 space-y-2 overflow-auto">
+              {remoteRepos.map((r) => (
+                <button
+                  key={`${r.provider}-${r.external_id}`}
+                  type="button"
+                  className="flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left text-sm hover:bg-black/[0.02]"
+                  onClick={async () => {
+                    setOauthBusy("connect");
+                    try {
+                      await api.connectOAuthRepo(active.id, {
+                        external_id: r.external_id,
+                        name: r.name,
+                        clone_url: r.clone_url,
+                        default_branch: r.default_branch,
+                      });
+                      await repos.refetch();
+                      setOauthMsg(`Connected ${r.full_name}`);
+                    } catch (e) {
+                      setOauthError(e instanceof Error ? e.message : "Connect failed");
+                    } finally {
+                      setOauthBusy(null);
+                    }
+                  }}
+                >
+                  <span>{r.full_name}</span>
+                  <span className="text-xs text-muted-foreground">{r.default_branch}</span>
+                </button>
+              ))}
+              {!loadingRepos && remoteRepos.length === 0 && (
+                <p className="text-sm text-muted-foreground">No repositories found.</p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-[1fr_1.1fr]">
         <Card>
           <CardHeader>
-            <CardTitle>Add repository</CardTitle>
-            <CardDescription>URL + optional token / GitLab project id / path filters.</CardDescription>
+            <CardTitle>Manual connect</CardTitle>
+            <CardDescription>
+              Fallback for bare git URLs or when OAuth apps are not configured yet.
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            <form className="space-y-4" onSubmit={onSubmit}>
-              <div className="space-y-2">
-                <Label htmlFor="name">Name</Label>
-                <Input id="name" {...register("name")} />
-                {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="url">Git URL</Label>
-                <Input id="url" {...register("url")} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="default_branch">Default branch</Label>
-                <Input id="default_branch" {...register("default_branch")} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="token">Access token</Label>
-                <Input id="token" type="password" {...register("token")} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="gitlab_project_id">GitLab project id (for MR)</Label>
-                <Input id="gitlab_project_id" {...register("gitlab_project_id")} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="path_filters">Path filters</Label>
-                <Input id="path_filters" placeholder="apps/api, packages/shared" {...register("path_filters")} />
-              </div>
-              <Button type="submit" disabled={createRepo.isPending}>
-                {createRepo.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-                Connect repository
+            {!showManual ? (
+              <Button variant="outline" onClick={() => setShowManual(true)}>
+                Show manual form (PAT / URL)
               </Button>
-              {createRepo.isError && (
-                <p className="text-xs text-destructive">{(createRepo.error as Error).message}</p>
-              )}
-            </form>
+            ) : (
+              <form className="space-y-4" onSubmit={onSubmit}>
+                <div className="space-y-2">
+                  <Label htmlFor="name">Name</Label>
+                  <Input id="name" {...register("name")} />
+                  {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="url">Git URL</Label>
+                  <Input id="url" {...register("url")} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="default_branch">Default branch</Label>
+                  <Input id="default_branch" {...register("default_branch")} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="token">Access token (optional)</Label>
+                  <Input id="token" type="password" {...register("token")} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="gitlab_project_id">GitLab project id</Label>
+                  <Input id="gitlab_project_id" {...register("gitlab_project_id")} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="path_filters">Path filters</Label>
+                  <Input
+                    id="path_filters"
+                    placeholder="apps/api, packages/shared"
+                    {...register("path_filters")}
+                  />
+                </div>
+                <Button type="submit" disabled={createRepo.isPending}>
+                  {createRepo.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Connect repository
+                </Button>
+                {createRepo.isError && (
+                  <p className="text-xs text-destructive">
+                    {(createRepo.error as Error).message}
+                  </p>
+                )}
+              </form>
+            )}
           </CardContent>
         </Card>
 

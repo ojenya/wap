@@ -86,6 +86,24 @@ proxies `/api` to the `api` service via `API_PROXY_TARGET`. Git mirrors and
 per-run worktrees persist under `./data` (mounted into the API container).
 For the RAG phase, start Postgres + pgvector with `docker compose --profile rag up`.
 
+## OAuth (GitLab / GitHub) — recommended
+
+Create an OAuth application and set env vars (also wired in `docker-compose.yml`):
+
+**GitLab** (User Settings → Applications, or Group/Instance apps):
+- Redirect URI: `http://localhost:5173/repositories?oauth=gitlab`
+- Scopes: `api`, `read_repository`, `write_repository`
+- Env: `GITLAB_OAUTH_CLIENT_ID`, `GITLAB_OAUTH_CLIENT_SECRET`
+
+**GitHub** (Settings → Developer settings → OAuth Apps):
+- Authorization callback URL: `http://localhost:5173/repositories?oauth=github`
+- Env: `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET`
+
+Then open **Repositories → Connect GitLab / Connect GitHub**. The UI never asks
+for a PAT; the access token is stored encrypted and reused for clone/push/MR.
+
+Manual PAT/URL connect remains under “Show manual form” as a fallback.
+
 ## Connect a repository (GitLab / GitHub / git)
 
 Use the **Repositories** page in the UI, or the API:

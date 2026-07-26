@@ -56,6 +56,24 @@ class Settings(BaseSettings):
         ),
     )
 
+    # GitHub OAuth
+    github_oauth_client_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("APP_GITHUB_OAUTH_CLIENT_ID", "GITHUB_OAUTH_CLIENT_ID"),
+    )
+    github_oauth_client_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "APP_GITHUB_OAUTH_CLIENT_SECRET", "GITHUB_OAUTH_CLIENT_SECRET"
+        ),
+    )
+    github_oauth_redirect_uri: str = Field(
+        default="http://localhost:5173/repositories?oauth=github",
+        validation_alias=AliasChoices(
+            "APP_GITHUB_OAUTH_REDIRECT_URI", "GITHUB_OAUTH_REDIRECT_URI"
+        ),
+    )
+
     # opencode Zen / Go
     opencode_enabled: bool = True
     opencode_plan: Literal["zen", "go"] = Field(

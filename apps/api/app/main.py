@@ -20,6 +20,7 @@ from app.routers import (
     learning,
     mcp,
     metrics,
+    oauth,
     repos,
     secrets,
     tasks,
@@ -56,6 +57,7 @@ app.add_middleware(
 
 app.include_router(tasks.router)
 app.include_router(repos.router)
+app.include_router(oauth.router)
 app.include_router(metrics.router)
 app.include_router(workflow_config.router)
 app.include_router(learning.router)

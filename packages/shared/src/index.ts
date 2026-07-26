@@ -268,3 +268,23 @@ export interface McpServer {
   tools_cache: unknown[];
   created_at: string;
 }
+
+export interface OAuthConnection {
+  id: string;
+  provider: string;
+  account_id: string;
+  account_login: string;
+  account_name: string;
+  scopes: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RemoteRepo {
+  external_id: string;
+  name: string;
+  full_name: string;
+  clone_url: string;
+  default_branch: string;
+  provider: string;
+}

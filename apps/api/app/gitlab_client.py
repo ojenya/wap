@@ -40,7 +40,13 @@ def oauth_authorize_url(state: str = "wap") -> str | None:
     return f"{settings.gitlab_base_url.rstrip('/')}/oauth/authorize?{params}"
 
 
-def oauth_exchange_code(code: str) -> str:
+def oauth_configured() -> bool:
+    settings = get_settings()
+    return bool(settings.gitlab_oauth_client_id and settings.gitlab_oauth_client_secret)
+
+
+def oauth_exchange_code(code: str) -> dict[str, Any]:
+    """Exchange authorization code; returns full token payload."""
     settings = get_settings()
     if not settings.gitlab_oauth_client_id or not settings.gitlab_oauth_client_secret:
         raise GitLabError("GitLab OAuth is not configured")
@@ -56,10 +62,20 @@ def oauth_exchange_code(code: str) -> str:
         resp = client.post(url, data=data)
     if resp.status_code >= 400:
         raise GitLabError(f"OAuth token exchange failed: {resp.status_code} {resp.text}")
-    token = resp.json().get("access_token")
-    if not token:
+    payload = resp.json()
+    if not payload.get("access_token"):
         raise GitLabError("OAuth response missing access_token")
-    return token
+    return payload
+
+
+def fetch_current_user(token: str) -> dict[str, Any]:
+    settings = get_settings()
+    url = f"{settings.gitlab_base_url.rstrip('/')}/api/v4/user"
+    with httpx.Client(timeout=30) as client:
+        resp = client.get(url, headers=_headers(token))
+    if resp.status_code >= 400:
+        raise GitLabError(f"GitLab user failed: {resp.status_code} {resp.text}")
+    return resp.json()
 
 
 def _headers(token: str) -> dict[str, str]:
