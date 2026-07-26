@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import shutil
 import socket
 import subprocess
@@ -24,10 +25,65 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, TextIO
 from urllib.error import URLError
 from urllib.request import urlopen
 
 from app.config import get_settings
+
+
+def _tail_file(path: Path, limit: int = 2000) -> str:
+    if not path.exists():
+        return ""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return text[-limit:] if len(text) > limit else text
+
+
+def _stop_process(proc: subprocess.Popen[Any] | None) -> None:
+    """Terminate a child (and its process group on Unix) without hanging forever."""
+    if proc is None or proc.poll() is not None:
+        return
+    pid = proc.pid
+    use_group = bool(pid) and hasattr(os, "killpg") and os.name != "nt"
+    try:
+        if use_group:
+            try:
+                os.killpg(pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                proc.terminate()
+        else:
+            proc.terminate()
+        try:
+            proc.wait(timeout=5)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        if use_group:
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                proc.kill()
+        else:
+            proc.kill()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _write_status(artifact_dir: Path, message: str) -> None:
+    try:
+        (artifact_dir / "status.txt").write_text(
+            f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} {message}\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
 
 
 @dataclass
@@ -333,27 +389,49 @@ def run_playwright(
 
     base_url = f"http://127.0.0.1:{port}"
     env = {**os.environ, "WAP_BASE_URL": base_url, "BROWSER": "none", "CI": "1"}
-    server: subprocess.Popen[str] | None = None
-    logs: list[str] = [f"start: {' '.join(start_cmd)}", f"base_url: {base_url}"]
+    server: subprocess.Popen[Any] | None = None
+    server_log_fh: TextIO[str] | None = None
+    server_log_path = artifact_dir / "server.log"
+    worker_log_path = artifact_dir / "worker.log"
+    logs: list[str] = [
+        f"start: {' '.join(start_cmd)}",
+        f"base_url: {base_url}",
+        f"server_log: {server_log_path}",
+        f"worker_log: {worker_log_path}",
+    ]
     wait_budget = min(60.0, float(timeout or settings.playwright_timeout_seconds))
+    pw_timeout = int(timeout or settings.playwright_timeout_seconds)
+
+    def _combined_logs(*extra: str) -> str:
+        parts = [*logs, *extra]
+        tail = _tail_file(server_log_path)
+        if tail:
+            parts.append("--- server.log ---")
+            parts.append(tail)
+        worker_tail = _tail_file(worker_log_path)
+        if worker_tail:
+            parts.append("--- worker.log ---")
+            parts.append(worker_tail)
+        return "\n".join(parts)[:8000]
 
     try:
+        # Never use stdout=PIPE here: a chatty product server (access logs /
+        # Vite 404 spam) fills the OS pipe buffer and deadlocks Playwright.
+        _write_status(artifact_dir, "starting product server")
+        server_log_fh = server_log_path.open("w", encoding="utf-8")
         server = subprocess.Popen(
             start_cmd,
             cwd=str(worktree),
             env=env,
-            stdout=subprocess.PIPE,
+            stdout=server_log_fh,
             stderr=subprocess.STDOUT,
             text=True,
+            start_new_session=True,
         )
         if not _wait_http(base_url, timeout=wait_budget):
-            try:
-                if server.stdout and server.poll() is not None:
-                    logs.append(server.stdout.read()[:2000])
-                else:
-                    logs.append("still starting / no readiness")
-            except OSError:
-                pass
+            ready_note = "still starting / no readiness"
+            if server.poll() is not None:
+                ready_note = f"server exited early code={server.returncode}"
             return PlaywrightRunResult(
                 mode="failed",
                 all_passed=False,
@@ -361,7 +439,7 @@ def run_playwright(
                     ScenarioResult(s, "failed", error="app did not become ready")
                     for s in scenarios
                 ],
-                logs="\n".join(logs),
+                logs=_combined_logs(ready_note),
                 base_url=base_url,
                 artifact_dir=str(artifact_dir),
                 start_command=start_cmd,
@@ -380,29 +458,36 @@ def run_playwright(
             encoding="utf-8",
         )
         worker_path.write_text(_WORKER, encoding="utf-8")
+        _write_status(artifact_dir, "running playwright worker")
         try:
-            proc = subprocess.run(
-                [sys.executable, str(worker_path), str(cfg_path)],
-                capture_output=True,
-                text=True,
-                timeout=timeout or settings.playwright_timeout_seconds,
-                env=env,
-                check=False,
-            )
+            with worker_log_path.open("w", encoding="utf-8") as worker_log_fh:
+                proc = subprocess.run(
+                    [sys.executable, str(worker_path), str(cfg_path)],
+                    stdout=worker_log_fh,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=pw_timeout,
+                    env=env,
+                    check=False,
+                    start_new_session=True,
+                )
         except subprocess.TimeoutExpired:
+            _write_status(artifact_dir, "playwright timeout")
             return PlaywrightRunResult(
                 mode="failed",
                 all_passed=False,
                 results=[ScenarioResult(s, "failed", error="timeout") for s in scenarios],
-                logs="\n".join([*logs, "playwright timeout"]),
+                logs=_combined_logs("playwright timeout"),
                 base_url=base_url,
                 artifact_dir=str(artifact_dir),
                 start_command=start_cmd,
             )
 
-        logs.append(proc.stderr or "")
-        payload: dict = {}
-        for line in reversed((proc.stdout or "").strip().splitlines()):
+        worker_out = _tail_file(worker_log_path, limit=50_000)
+        if proc.returncode not in (0, None):
+            logs.append(f"worker exit code: {proc.returncode}")
+        payload: dict[str, Any] = {}
+        for line in reversed(worker_out.strip().splitlines()):
             try:
                 payload = json.loads(line)
                 break
@@ -410,13 +495,12 @@ def run_playwright(
                 continue
 
         if payload.get("mode") == "skipped" or not payload.get("results"):
+            _write_status(artifact_dir, "skipped")
             return PlaywrightRunResult(
                 mode="skipped",
                 all_passed=True,
                 results=[ScenarioResult(s, "skipped") for s in scenarios],
-                logs="\n".join(
-                    [*logs, payload.get("error") or "playwright not installed"]
-                ),
+                logs=_combined_logs(payload.get("error") or "playwright not installed"),
                 base_url=base_url,
                 artifact_dir=str(artifact_dir),
                 start_command=start_cmd,
@@ -431,20 +515,25 @@ def run_playwright(
             )
             for r in payload["results"]
         ]
+        _write_status(
+            artifact_dir,
+            "passed" if all(r.status == "passed" for r in results) else "failed",
+        )
         return PlaywrightRunResult(
             mode="worktree-e2e",
             all_passed=all(r.status == "passed" for r in results),
             results=results,
             console_errors=payload.get("console_errors") or [],
-            logs="\n".join(logs)[:4000],
+            logs=_combined_logs(),
             base_url=base_url,
             artifact_dir=str(artifact_dir),
             start_command=start_cmd,
         )
     finally:
-        if server is not None and server.poll() is None:
-            server.terminate()
+        _stop_process(server)
+        if server_log_fh is not None:
             try:
-                server.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                server.kill()
+                server_log_fh.close()
+            except OSError:
+                pass
+        _write_status(artifact_dir, "finished")

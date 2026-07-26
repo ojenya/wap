@@ -668,11 +668,32 @@ def _capture_artifacts(db: Session, run: WorkflowRun, stage_name: str, output: d
                     )
                 )
         if output.get("artifact_dir"):
+            artifact_dir = Path(str(output["artifact_dir"]))
             db.add(
                 Artifact(
                     run_id=run.id,
                     kind="playwright",
                     name="artifact-dir",
-                    content=str(output["artifact_dir"]),
+                    content=str(artifact_dir),
                 )
             )
+            for log_name in ("server.log", "worker.log", "status.txt"):
+                log_path = artifact_dir / log_name
+                if log_path.exists():
+                    db.add(
+                        Artifact(
+                            run_id=run.id,
+                            kind="playwright",
+                            name=log_name,
+                            content=str(log_path),
+                        )
+                    )
+            if output.get("logs"):
+                db.add(
+                    Artifact(
+                        run_id=run.id,
+                        kind="playwright",
+                        name="sandbox-qa.log",
+                        content=str(output["logs"])[:20_000],
+                    )
+                )

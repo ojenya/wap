@@ -86,5 +86,49 @@ def test_worktree_static_e2e_passes_when_playwright_available(monkeypatch, tmp_p
         arts = [a for r in result.results for a in r.artifacts]
         assert any(str(a).endswith(".png") for a in arts)
         assert (product / ".wap" / "e2e" / "acceptance.spec.ts").exists()
+        assert (Path(result.artifact_dir) / "server.log").exists()
+        assert (Path(result.artifact_dir) / "status.txt").exists()
     else:
         assert result.all_passed is True
+
+
+def test_product_server_stdout_goes_to_log_file(monkeypatch, tmp_path: Path):
+    """Regression: stdout=PIPE deadlocked sandbox_qa when the product logged a lot."""
+    import subprocess
+
+    monkeypatch.setenv("APP_DATA_DIR", str(tmp_path / "data"))
+    get_settings.cache_clear()
+    product = tmp_path / "product"
+    product.mkdir()
+    (product / "index.html").write_text(
+        "<!doctype html><html><body><h1>Demo</h1></body></html>",
+        encoding="utf-8",
+    )
+
+    captured: dict = {}
+    real_popen = subprocess.Popen
+
+    def spy_popen(*args, **kwargs):  # noqa: ANN002, ANN003
+        captured["kwargs"] = kwargs
+        return real_popen(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", spy_popen)
+
+    try:
+        result = run_playwright(
+            ["Demo loads"],
+            worktree_path=str(product),
+            run_id="run-log-file",
+            task_title="Demo",
+            timeout=60,
+        )
+    finally:
+        get_settings.cache_clear()
+
+    assert "kwargs" in captured
+    assert captured["kwargs"].get("stdout") is not subprocess.PIPE
+    assert captured["kwargs"].get("stdout") is not None
+    log_path = tmp_path / "data" / "artifacts" / "run-log-file" / "playwright" / "server.log"
+    assert log_path.exists()
+    assert "server_log:" in result.logs
+    assert result.mode in {"worktree-e2e", "skipped", "failed"}
