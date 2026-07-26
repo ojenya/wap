@@ -52,9 +52,12 @@ and in the `scripts` of the root `package.json`. Don't duplicate them here.
   under `apps/web/src/components/ui/` (copied into the repo — no runtime dependency
   on a shadcn registry). Prefer extending those primitives over reintroducing
   styled-components.
-- Connected repos: `POST /api/repositories` (also the Repositories page). For a
-  local path when the API runs in Docker, use the container path under the
-  mounted volume (e.g. `/app/data/demo-origin`), not the host `/workspace/...`.
+- Connected repos: prefer OAuth via `/api/oauth/{gitlab|github}/start` +
+  callback (Repositories page buttons). Tokens land in `oauth_connections`
+  encrypted; connecting a remote repo copies the token onto `repositories`.
+  Manual `POST /api/repositories` + PAT still works. For a local path when the
+  API runs in Docker, use the container path under the mounted volume
+  (e.g. `/app/data/demo-origin`), not the host `/workspace/...`.
 - Runs are **async by default** (`POST /api/tasks/{id}/runs`); use `?sync=true`
   in tests. High-risk tasks pause at `awaiting_approval` until
   `POST /api/runs/{id}/approve`. UI polls task detail every 1.5s.
