@@ -39,6 +39,21 @@ def test_writes_e2e_suite_into_worktree(tmp_path: Path):
     assert "User can see the navbar" in text
 
 
+def test_required_e2e_fails_run_without_worktree(db_session, require_playwright_e2e):
+    from app.models import RunStatus, StageStatus, Task
+    from app.workflow.engine import run_workflow
+
+    task = Task(title="Add logout button to navbar", require_approval=False)
+    db_session.add(task)
+    db_session.commit()
+
+    run = run_workflow(db_session, task)
+    assert run.status == RunStatus.failed
+    sandbox = next(s for s in run.stages if s.name == "sandbox_qa")
+    assert sandbox.status == StageStatus.failed
+    assert "did not run" in (sandbox.error or "")
+
+
 def test_worktree_static_e2e_passes_when_playwright_available(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("APP_DATA_DIR", str(tmp_path / "data"))
     get_settings.cache_clear()

@@ -34,7 +34,9 @@ def _init_repo(path: Path) -> None:
     )
 
 
-def test_workflow_uses_real_worktree(db_session, tmp_path, monkeypatch):
+def test_workflow_uses_real_worktree(
+    db_session, tmp_path, monkeypatch, require_playwright_e2e
+):
     monkeypatch.setenv("APP_DATA_DIR", str(tmp_path / "data"))
     # Reset cached settings so APP_DATA_DIR is picked up.
     from app.config import get_settings
@@ -81,6 +83,12 @@ def test_workflow_uses_real_worktree(db_session, tmp_path, monkeypatch):
     assert develop.output_payload["develop_mode"] == "worktree-stub"
     assert develop.output_payload["diff"]
     assert (Path(run.worktree_path) / "src" / "auth.ts").exists()
+
+    sandbox = next(s for s in run.stages if s.name == "sandbox_qa")
+    assert sandbox.status.value == "completed"
+    assert sandbox.output_payload["mode"] == "worktree-e2e"
+    assert sandbox.output_payload["all_passed"] is True
+    assert (Path(run.worktree_path) / ".wap" / "e2e" / "acceptance.spec.ts").exists()
 
     get_settings.cache_clear()
 

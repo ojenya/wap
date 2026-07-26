@@ -32,6 +32,8 @@ SAFE_PARAM_DEFAULTS: dict = {
     "auto_approve_high_risk": False,
     "create_merge_request": True,
     "playwright_enabled": True,
+    # When true, sandbox_qa may not skip: missing worktree/Chromium fails the run.
+    "playwright_required": True,
     "opencode_plan": "zen",
     "opencode_model": "opencode/qwen3-coder",
     "report_sections": [

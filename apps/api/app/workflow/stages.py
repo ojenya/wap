@@ -395,8 +395,21 @@ class SandboxQAStage(Stage):
 
     def run(self, context: WorkflowContext) -> StageResult:
         scenarios = context.get("analysis").get("playwright_scenarios", [])
+        required = bool(context.workflow_params.get("playwright_required", True))
         if not context.workflow_params.get("playwright_enabled", True):
             results = [{"scenario": s, "status": "skipped", "artifacts": []} for s in scenarios]
+            if required:
+                return StageResult(
+                    outcome=StageOutcome.failed,
+                    output={
+                        "results": results,
+                        "all_passed": False,
+                        "mode": "disabled",
+                    },
+                    error="Playwright disabled but playwright_required=true",
+                    evidence=[],
+                    tokens=10,
+                )
             return StageResult(
                 output={"results": results, "all_passed": True, "mode": "disabled"},
                 evidence=[],
@@ -419,10 +432,56 @@ class SandboxQAStage(Stage):
             }
             for r in pw.results
         ]
+        executed = pw.mode == "worktree-e2e"
+        all_passed = bool(pw.all_passed and executed)
+        if required and not executed:
+            return StageResult(
+                outcome=StageOutcome.failed,
+                output={
+                    "results": results,
+                    "all_passed": False,
+                    "mode": pw.mode,
+                    "console_errors": pw.console_errors,
+                    "logs": pw.logs[:2000],
+                    "base_url": pw.base_url,
+                    "artifact_dir": pw.artifact_dir,
+                    "start_command": pw.start_command,
+                },
+                error=(
+                    "Playwright E2E did not run (mode="
+                    f"{pw.mode}). Need a connected repo/worktree and Chromium. "
+                    f"Logs: {(pw.logs or '')[:400]}"
+                ),
+                evidence=[
+                    Evidence(source="playwright", reference=r.scenario, reason=r.status)
+                    for r in pw.results
+                ],
+                tokens=_tokens(results),
+            )
+        if required and not all_passed:
+            return StageResult(
+                outcome=StageOutcome.failed,
+                output={
+                    "results": results,
+                    "all_passed": False,
+                    "mode": pw.mode,
+                    "console_errors": pw.console_errors,
+                    "logs": pw.logs[:2000],
+                    "base_url": pw.base_url,
+                    "artifact_dir": pw.artifact_dir,
+                    "start_command": pw.start_command,
+                },
+                error="Playwright E2E scenarios failed against the product worktree",
+                evidence=[
+                    Evidence(source="playwright", reference=r.scenario, reason=r.status)
+                    for r in pw.results
+                ],
+                tokens=_tokens(results),
+            )
         return StageResult(
             output={
                 "results": results,
-                "all_passed": pw.all_passed,
+                "all_passed": all_passed if executed else pw.all_passed,
                 "mode": pw.mode,
                 "console_errors": pw.console_errors,
                 "logs": pw.logs[:2000],

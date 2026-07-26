@@ -54,8 +54,9 @@ python3 -m venv .venv
 
 Sandbox QA runs Playwright against the **task worktree** (the product under
 change), writes `.wap/e2e/` into that tree, and stores artifacts under
-`data/artifacts/<run_id>/playwright/`. Without a connected repo/worktree the
-stage skips.
+`data/artifacts/<run_id>/playwright/`. With default
+`playwright_required=true`, a missing worktree/Chromium **fails** the run
+instead of skipping — look for stage `mode: worktree-e2e` to confirm E2E ran.
 
 ### Frontend (`apps/web`)
 

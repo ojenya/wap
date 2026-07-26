@@ -67,7 +67,13 @@ and in the `scripts` of the root `package.json`. Don't duplicate them here.
 - Sandbox QA Playwright E2E targets the **product worktree** (software under
   development), not the platform UI. `SandboxQAStage` starts the app from the
   worktree, generates `.wap/e2e/` there, and stores screenshot/video/trace under
-  `APP_DATA_DIR/artifacts/<run_id>/playwright/`. Without a worktree (or when
-  Playwright/Chromium is missing) the stage skips gracefully. Install browsers
-  once with `apps/api/.venv/bin/playwright install chromium` (Docker image does
-  this at build time).
+  `APP_DATA_DIR/artifacts/<run_id>/playwright/`.
+- **No silent skips in production defaults:** workflow param
+  `playwright_required=true` (default) makes any non-`worktree-e2e` outcome
+  fail the stage/run. To be sure E2E actually ran, check the stage output
+  `mode === "worktree-e2e"` and `all_passed === true`, plus artifacts under
+  `data/artifacts/<run_id>/playwright/`. Prerequisites: task has
+  `repository_id` (real worktree), Chromium via
+  `apps/api/.venv/bin/playwright install chromium` (Docker image installs at
+  build), and `playwright_enabled=true`. Set `playwright_required=false` only
+  for local smoke runs without a product checkout.

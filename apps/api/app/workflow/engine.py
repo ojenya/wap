@@ -284,8 +284,14 @@ def execute_run(
             execution.status = StageStatus.failed
             execution.error = result.error
             # Retry loop: static/sandbox failure -> back to develop.
+            # Do NOT retry when Playwright never executed (missing worktree /
+            # Chromium / disabled) — develop cannot fix infra prerequisites.
+            sandbox_infra_gap = stage.name == "sandbox_qa" and result.output.get(
+                "mode"
+            ) in {"skipped", "disabled"}
             if (
                 stage.name in {"static_checks", "sandbox_qa"}
+                and not sandbox_infra_gap
                 and run.develop_iterations < max_iters
                 and "develop" in enabled
                 and context.task.task_type != "audit"
