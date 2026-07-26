@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
 from datetime import UTC, datetime
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import EnvBackend, Environment, EnvironmentStatus
+from app.config import get_settings
+from app.models import EnvBackend, Environment, EnvironmentStatus, VmStatus
 from app.vm.backends import VmBackendError
 from app.vm.manager import VmManager
 
@@ -91,10 +94,6 @@ def refresh_environment(db: Session, env: Environment) -> Environment:
 
     try:
         # Materialize a tiny workspace marker so the VM has content to snapshot.
-        from pathlib import Path
-
-        from app.config import get_settings
-
         staging = Path(get_settings().data_dir).resolve() / "env-staging" / env.id
         staging.mkdir(parents=True, exist_ok=True)
         (staging / "UPDATE_SCRIPT").write_text(script, encoding="utf-8")
@@ -141,3 +140,27 @@ def environment_for_repository(db: Session, repository_id: str | None) -> Enviro
         .where(Environment.repository_id == repository_id)
         .order_by(Environment.updated_at.desc())
     )
+
+
+def delete_environment(db: Session, env: Environment) -> None:
+    """Destroy running VMs, remove on-disk state, then delete the environment row."""
+    manager = VmManager(db)
+    instances = manager.list_instances(env.id)
+    for vm in instances:
+        if vm.status not in {VmStatus.destroyed, VmStatus.stopped}:
+            try:
+                manager.destroy(vm, env)
+            except VmBackendError:
+                pass
+        work = Path(vm.work_dir) if vm.work_dir else None
+        if work and work.exists():
+            shutil.rmtree(work, ignore_errors=True)
+        db.delete(vm)
+
+    data = Path(get_settings().data_dir).resolve()
+    for rel in (data / "env-staging" / env.id, data / "vm-snapshots" / env.id):
+        if rel.exists():
+            shutil.rmtree(rel, ignore_errors=True)
+
+    db.delete(env)
+    db.commit()

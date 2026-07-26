@@ -93,6 +93,8 @@ export const api = {
     request<Environment>("/environments", { method: "POST", body: JSON.stringify(input) }),
   refreshEnvironment: (id: string) =>
     request<Environment>(`/environments/${id}/refresh`, { method: "POST" }),
+  deleteEnvironment: (id: string) =>
+    request<void>(`/environments/${id}`, { method: "DELETE" }),
   vmCapabilities: () => request<VmCapabilities>("/environments/capabilities"),
   bootVm: (envId: string, body: Record<string, unknown> = {}) =>
     request<VmInstance>(`/environments/${envId}/vms/boot`, {
@@ -103,6 +105,13 @@ export const api = {
     request<VmInstance>(`/environments/${envId}/vms/${vmId}/destroy`, { method: "POST" }),
   snapshotVm: (envId: string, vmId: string) =>
     request<VmInstance>(`/environments/${envId}/vms/${vmId}/snapshot`, { method: "POST" }),
+  screenshotVm: (envId: string, vmId: string) =>
+    request<{ path: string; url: string; filename: string }>(
+      `/environments/${envId}/vms/${vmId}/screenshot`,
+      { method: "POST" },
+    ),
+  vmScreenshotUrl: (envId: string, vmId: string) =>
+    `${BASE}/environments/${envId}/vms/${vmId}/screenshot/latest`,
   listVms: (envId: string) => request<VmInstance[]>(`/environments/${envId}/vms`),
   listAutomations: () => request<Automation[]>("/automations"),
   createAutomation: (input: Record<string, unknown>) =>

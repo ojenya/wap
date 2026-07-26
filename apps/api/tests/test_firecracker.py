@@ -141,9 +141,50 @@ def test_api_vm_lifecycle(client, tmp_path, monkeypatch):
         assert exe.json()["exit_code"] == 0
         assert "hello-from-vm" in exe.json()["output"]
 
+        shot = client.post(f"/api/environments/{env_id}/vms/{vm_id}/screenshot")
+        assert shot.status_code == 200
+        assert shot.json()["filename"].endswith(".png")
+        assert Path(shot.json()["path"]).is_file()
+        latest = client.get(f"/api/environments/{env_id}/vms/{vm_id}/screenshot/latest")
+        assert latest.status_code == 200
+        assert latest.headers["content-type"].startswith("image/png")
+
         destroy = client.post(f"/api/environments/{env_id}/vms/{vm_id}/destroy")
         assert destroy.status_code == 200
         assert destroy.json()["status"] == "destroyed"
+
+        deleted = client.delete(f"/api/environments/{env_id}")
+        assert deleted.status_code == 204
+        assert client.get(f"/api/environments/{env_id}").status_code == 404
+    finally:
+        get_settings.cache_clear()
+
+
+def test_delete_environment_removes_disk_state(db_session, tmp_path, monkeypatch):
+    from app.environments import delete_environment
+
+    monkeypatch.setenv("APP_FIRECRACKER_MODE", "emulate")
+    monkeypatch.setenv("APP_DATA_DIR", str(tmp_path / "data"))
+    get_settings.cache_clear()
+    try:
+        env = create_environment(
+            db_session,
+            name="to-delete",
+            backend="firecracker",
+            update_script="true",
+        )
+        mgr = VmManager(db_session)
+        vm = mgr.boot(env)
+        work = Path(vm.work_dir)
+        staging = tmp_path / "data" / "env-staging" / env.id
+        staging.mkdir(parents=True)
+        (staging / "x").write_text("1", encoding="utf-8")
+        assert work.exists()
+
+        delete_environment(db_session, env)
+        assert db_session.get(type(env), env.id) is None
+        assert not work.exists()
+        assert not staging.exists()
     finally:
         get_settings.cache_clear()
 
